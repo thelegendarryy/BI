@@ -128,3 +128,67 @@ export interface SalesCubeDataset {
   dates: DimDate[];
   sales: FactSales[];
 }
+
+// ============================================================
+// OLAP API Response Types (server → client via fetch)
+// These represent the JSON shapes returned by /api/* routes.
+// ============================================================
+
+/** Response from GET /api/kpis */
+export interface OlapKpiResponse {
+  totalSales: number;
+  totalQuantity: number;
+  totalTax: number;
+  totalDiscount: number;
+  _raw?: Record<string, unknown>;
+}
+
+/** Response item from GET /api/sales-by-product */
+export interface OlapProductSale {
+  name: string;
+  lineTotal: number;
+}
+
+/** Response item from GET /api/sales-by-date */
+export interface OlapDateSale {
+  period: string;
+  lineTotal: number;
+}
+
+/** Response item from GET /api/sales-by-customer */
+export interface OlapCustomerSale {
+  customer: string;
+  lineTotal: number;
+}
+
+/** Response item from GET /api/sales-by-employee */
+export interface OlapEmployeeSale {
+  employee: string;
+  lineTotal: number;
+  quantity: number;
+  orderLines: number;
+}
+
+/** Response item from GET /api/sales-by-promotion */
+export interface OlapPromotionSale {
+  promotionType: string;
+  lineTotal: number;
+  discountAmount: number;
+  quantity: number;
+  avgDiscountPercent: number;
+}
+
+/** Response item from GET /api/sales-by-brand */
+export interface OlapBrandSale {
+  brand: string;
+  lineTotal: number;
+  quantity: number;
+}
+
+/** Generic async data state wrapper used by all useOlap* hooks */
+export interface OlapDataState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+

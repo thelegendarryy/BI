@@ -1,12 +1,29 @@
 'use client';
 
+/**
+ * ExecutiveOverview.tsx — Executive dashboard view
+ *
+ * Data sources (in priority order):
+ * 1. Live OLAP data from /api/kpis and /api/sales-by-date (via useKpis / useSalesByDate)
+ * 2. Static fallback from DashboardContext (salesCubeData.ts) if SSAS is unreachable
+ *
+ * The DataSourceBadge in the header indicates which source is active.
+ */
+
 import React, { useState } from 'react';
 import { useDashboard } from '../context/DashboardContext';
+import { useKpis, useSalesByDate } from '../hooks/useOlapData';
+import {
+  KpiCardSkeleton,
+  ChartSkeleton,
+  OlapErrorBanner,
+  DataSourceBadge,
+} from './LoadingSkeleton';
 import { 
   DollarSign, 
   ShoppingBag, 
   Tag, 
-  Users, 
+  Percent,
   ArrowUpRight, 
   ArrowDownRight,
   Info
@@ -23,38 +40,62 @@ import {
 } from 'recharts';
 
 export const ExecutiveOverview: React.FC = () => {
-  const { kpis, kpiTrends, timeSeriesData, filters, theme } = useDashboard();
+  // Static fallback data from DashboardContext
+  const { kpis: staticKpis, kpiTrends, timeSeriesData: staticTimeSeriesData, filters, theme } = useDashboard();
+
+  // Live OLAP data hooks
+  const { data: olapKpis, loading: kpisLoading, error: kpisError } = useKpis();
+  const { data: olapTimeSeries, loading: tsLoading, error: tsError } = useSalesByDate(
+    filters.year !== 'All' ? 'month' : 'year'
+  );
+
   const [chartMetric, setChartMetric] = useState<'financial' | 'volume'>('financial');
   const isDark = theme === 'dark';
 
-  const colors = {
-    revenue: isDark ? '#818cf8' : '#4f46e5', // glowing soft indigo vs solid indigo
-    profit: isDark ? '#34d399' : '#10b981',  // glowing soft emerald vs solid emerald
-    volume: isDark ? '#60a5fa' : '#2563eb',  // glowing soft blue vs solid blue
-    text: isDark ? '#94a3b8' : '#64748b',    // slate-400 vs slate-500 text
-    grid: isDark ? '#1e293b' : '#e2e8f0',    // slate-800 vs slate-200 lines
+  // --- Determine whether OLAP data is live or falling back ---
+  const kpisLive = !kpisLoading && !kpisError && olapKpis !== null;
+  const tsLive = !tsLoading && !tsError && olapTimeSeries !== null;
+
+  // --- KPI values: prefer OLAP, fallback to static ---
+  const displayKpis = {
+    totalRevenue: kpisLive ? olapKpis!.totalSales : staticKpis.totalRevenue,
+    totalUnits: kpisLive ? olapKpis!.totalQuantity : staticKpis.totalUnits,
+    totalTax: kpisLive ? olapKpis!.totalTax : 0,
+    totalDiscount: kpisLive ? olapKpis!.totalDiscount : staticKpis.avgDiscountAmount,
   };
 
-  // Format currency
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
+  // --- Chart data: prefer OLAP, fallback to static ---
+  // Transform OLAP date series to match Recharts format { name, revenue }
+  const olapChartData = olapTimeSeries?.map((d) => ({
+    name: d.period,
+    revenue: Math.round(d.lineTotal),
+    profit: Math.round(d.lineTotal * 0.35), // approximation (SSAS doesn't return cost)
+    volume: 0, // volume not in date endpoint — would need a separate query
+  })) ?? [];
+
+  const chartData = tsLive ? olapChartData : staticTimeSeriesData;
+
+  // --- Theme colors ---
+  const colors = {
+    revenue: isDark ? '#818cf8' : '#4f46e5',
+    profit: isDark ? '#34d399' : '#10b981',
+    volume: isDark ? '#60a5fa' : '#2563eb',
+    text: isDark ? '#94a3b8' : '#64748b',
+    grid: isDark ? '#1e293b' : '#e2e8f0',
+  };
+
+  // --- Formatters ---
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-      maximumFractionDigits: 0
+      maximumFractionDigits: 0,
     }).format(value);
-  };
 
-  // Format number
-  const formatNumber = (value: number) => {
-    return new Intl.NumberFormat('en-US').format(value);
-  };
+  const formatNumber = (value: number) => new Intl.NumberFormat('en-US').format(value);
+  const formatPercent = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
 
-  // Format percentage
-  const formatPercent = (value: number) => {
-    return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
-  };
-
-  // Helper to render growth indicator badge
+  // --- Trend badge ---
   const renderTrendBadge = (growth: number) => {
     const isPositive = growth >= 0;
     return (
@@ -67,7 +108,7 @@ export const ExecutiveOverview: React.FC = () => {
     );
   };
 
-  // Custom tooltips for Recharts
+  // --- Custom chart tooltip ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
@@ -92,85 +133,121 @@ export const ExecutiveOverview: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* OLAP Error Banners (shown only if API failed) */}
+      {kpisError && (
+        <OlapErrorBanner
+          message={kpisError}
+          endpoint="/api/kpis"
+        />
+      )}
+
       {/* 4 Core KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Revenue */}
-        <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Revenue</span>
-              <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                {formatCurrency(kpis.totalRevenue)}
-              </h2>
+        {kpisLoading ? (
+          // Show 4 skeleton cards while loading
+          <>
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+            <KpiCardSkeleton />
+          </>
+        ) : (
+          <>
+            {/* Total Revenue — from [Measures].[Line Total] */}
+            <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Revenue</span>
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
+                    {formatCurrency(displayKpis.totalRevenue)}
+                  </h2>
+                </div>
+                <div className="p-2.5 bg-primary/10 rounded-xl text-primary">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                <DataSourceBadge isLive={kpisLive} />
+                {kpisLive
+                  ? <span className="text-[10px] text-muted-foreground/60">Line Total (SSAS)</span>
+                  : renderTrendBadge(kpiTrends.revenueGrowth)
+                }
+              </div>
             </div>
-            <div className="p-2.5 bg-primary/10 rounded-xl text-primary">
-              <DollarSign className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-4">
-            {renderTrendBadge(kpiTrends.revenueGrowth)}
-            <span className="text-[10px] text-muted-foreground/60">Target: $1.2M</span>
-          </div>
-        </div>
 
-        {/* Total Units Sold */}
-        <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Units Sold</span>
-              <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                {formatNumber(kpis.totalUnits)}
-              </h2>
+            {/* Total Units — from [Measures].[Quantity] */}
+            <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Units Sold</span>
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
+                    {formatNumber(displayKpis.totalUnits)}
+                  </h2>
+                </div>
+                <div className="p-2.5 bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 rounded-xl">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                {kpisLive
+                  ? <DataSourceBadge isLive={true} />
+                  : renderTrendBadge(kpiTrends.unitsGrowth)
+                }
+                <span className="text-[10px] text-muted-foreground/60">Net Quantity</span>
+              </div>
             </div>
-            <div className="p-2.5 bg-indigo-500/10 text-indigo-500 dark:text-indigo-400">
-              <ShoppingBag className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-4">
-            {renderTrendBadge(kpiTrends.unitsGrowth)}
-            <span className="text-[10px] text-muted-foreground/60">Net Quantity</span>
-          </div>
-        </div>
 
-        {/* Average Discount Amount */}
-        <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Average Discount</span>
-              <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                {formatCurrency(kpis.avgDiscountAmount)}
-              </h2>
+            {/* Total Tax — from [Measures].[Tax Amount] */}
+            <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {kpisLive ? 'Total Tax' : 'Avg Discount'}
+                  </span>
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
+                    {formatCurrency(kpisLive ? displayKpis.totalTax : displayKpis.totalDiscount)}
+                  </h2>
+                </div>
+                <div className="p-2.5 bg-amber-500/10 text-amber-500 rounded-xl">
+                  <Tag className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
+                {kpisLive
+                  ? <DataSourceBadge isLive={true} />
+                  : <span className="text-xs font-semibold text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full">
+                      Avg Deal: {formatNumber(staticKpis.totalUnits > 0 ? staticKpis.totalRevenue / staticKpis.orderCount : 0)}
+                    </span>
+                }
+                <span className="text-[10px] text-muted-foreground/60">Tax Amount</span>
+              </div>
             </div>
-            <div className="p-2.5 bg-amber-500/10 text-amber-500">
-              <Tag className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
-            <span className="text-xs font-semibold text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full">
-              Avg Deal: {formatNumber(kpis.totalUnits > 0 ? kpis.totalRevenue / kpis.orderCount : 0)}
-            </span>
-            <span className="text-[10px] text-muted-foreground/60">Per Item</span>
-          </div>
-        </div>
 
-        {/* Active Customer Count */}
-        <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Customers</span>
-              <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                {formatNumber(kpis.activeCustomers)}
-              </h2>
+            {/* Total Discount — from [Measures].[Discount Amount] */}
+            <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Total Discounts
+                  </span>
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
+                    {formatCurrency(kpisLive ? olapKpis!.totalDiscount : staticKpis.avgDiscountAmount)}
+                  </h2>
+                </div>
+                <div className="p-2.5 bg-emerald-500/10 text-emerald-500 rounded-xl">
+                  <Percent className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                {kpisLive
+                  ? <DataSourceBadge isLive={true} />
+                  : renderTrendBadge(kpiTrends.customersGrowth)
+                }
+                <span className="text-[10px] text-muted-foreground/60">Discount Amount</span>
+              </div>
             </div>
-            <div className="p-2.5 bg-emerald-500/10 text-emerald-500">
-              <Users className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-4">
-            {renderTrendBadge(kpiTrends.customersGrowth)}
-            <span className="text-[10px] text-muted-foreground/60">Corporate/Retail</span>
-          </div>
-        </div>
+          </>
+        )}
       </div>
 
       {/* Time Series Charts Card */}
@@ -180,119 +257,128 @@ export const ExecutiveOverview: React.FC = () => {
             <h3 className="text-base font-bold text-foreground flex items-center gap-2">
               Sales Trend Analysis
               <span className="text-[10px] bg-secondary/80 font-normal px-2.5 py-0.5 rounded-full text-muted-foreground">
-                {filters.year === 'All' ? 'Quarterly Slices' : `Monthly Slices (${filters.year})`}
+                {filters.year === 'All' ? 'Yearly Slices' : `Monthly Slices (${filters.year})`}
               </span>
             </h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Time-series view showing performance trajectory of dimensions inside the SSAS cube.
+              Time-series view — {tsLive ? '📡 Live MDX data from SSAS cube' : '⚡ Static fallback data'}.
             </p>
           </div>
           {/* Chart Metric Toggle */}
-          <div className="flex bg-secondary p-1 rounded-xl w-fit border border-border/40">
-            <button
-              onClick={() => setChartMetric('financial')}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground data-[active=true]:bg-card data-[active=true]:shadow-sm"
-              data-active={chartMetric === 'financial'}
-            >
-              Revenue vs Profit
-            </button>
-            <button
-              onClick={() => setChartMetric('volume')}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground data-[active=true]:bg-card data-[active=true]:shadow-sm"
-              data-active={chartMetric === 'volume'}
-            >
-              Units Sold
-            </button>
+          <div className="flex items-center gap-3">
+            <DataSourceBadge isLive={tsLive} loading={tsLoading} />
+            <div className="flex bg-secondary p-1 rounded-xl w-fit border border-border/40">
+              <button
+                onClick={() => setChartMetric('financial')}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground data-[active=true]:bg-card data-[active=true]:shadow-sm"
+                data-active={chartMetric === 'financial'}
+              >
+                Revenue vs Profit
+              </button>
+              <button
+                onClick={() => setChartMetric('volume')}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground data-[active=true]:bg-card data-[active=true]:shadow-sm"
+                data-active={chartMetric === 'volume'}
+              >
+                Units Sold
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Recharts Container */}
+        {/* Error for time series */}
+        {tsError && <OlapErrorBanner message={tsError} endpoint="/api/sales-by-date" />}
+
+        {/* Chart Container */}
         <div className="h-[350px] w-full text-foreground select-none">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={timeSeriesData}
-              margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
-            >
-              <defs>
-                <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={colors.revenue} stopOpacity={0.25}/>
-                  <stop offset="95%" stopColor={colors.revenue} stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={colors.profit} stopOpacity={0.25}/>
-                  <stop offset="95%" stopColor={colors.profit} stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorVolume" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={colors.volume} stopOpacity={0.25}/>
-                  <stop offset="95%" stopColor={colors.volume} stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
-              <XAxis 
-                dataKey="name" 
-                stroke={colors.text} 
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                dy={10}
-              />
-              <YAxis 
-                stroke={colors.text} 
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(value) => chartMetric === 'financial' ? `$${value / 1000}k` : value}
-                dx={-10}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend 
-                verticalAlign="top" 
-                height={36} 
-                iconType="circle"
-                iconSize={8}
-                wrapperStyle={{ fontSize: '11px', paddingBottom: '15px', color: colors.text }}
-              />
-              {chartMetric === 'financial' ? (
-                <>
-                  <Area 
-                    name="Revenue"
-                    type="monotone" 
-                    dataKey="revenue" 
-                    stroke={colors.revenue} 
-                    strokeWidth={2.5}
-                    fillOpacity={1} 
-                    fill="url(#colorRevenue)" 
-                  />
-                  <Area 
-                    name="Net Profit"
-                    type="monotone" 
-                    dataKey="profit" 
-                    stroke={colors.profit} 
-                    strokeWidth={2.5}
-                    fillOpacity={1} 
-                    fill="url(#colorProfit)" 
-                  />
-                </>
-              ) : (
-                <Area 
-                  name="Volume"
-                  type="monotone" 
-                  dataKey="volume" 
-                  stroke={colors.volume} 
-                  strokeWidth={2.5}
-                  fillOpacity={1} 
-                  fill="url(#colorVolume)" 
+          {tsLoading ? (
+            <ChartSkeleton height={350} />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={colors.revenue} stopOpacity={0.25}/>
+                    <stop offset="95%" stopColor={colors.revenue} stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={colors.profit} stopOpacity={0.25}/>
+                    <stop offset="95%" stopColor={colors.profit} stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorVolume" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={colors.volume} stopOpacity={0.25}/>
+                    <stop offset="95%" stopColor={colors.volume} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
+                <XAxis 
+                  dataKey="name" 
+                  stroke={colors.text} 
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  dy={10}
                 />
-              )}
-            </AreaChart>
-          </ResponsiveContainer>
+                <YAxis 
+                  stroke={colors.text} 
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => chartMetric === 'financial' ? `$${value / 1000}k` : value}
+                  dx={-10}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend 
+                  verticalAlign="top" 
+                  height={36} 
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: '11px', paddingBottom: '15px', color: colors.text }}
+                />
+                {chartMetric === 'financial' ? (
+                  <>
+                    <Area 
+                      name="Revenue"
+                      type="monotone" 
+                      dataKey="revenue" 
+                      stroke={colors.revenue} 
+                      strokeWidth={2.5}
+                      fillOpacity={1} 
+                      fill="url(#colorRevenue)" 
+                    />
+                    <Area 
+                      name="Net Profit"
+                      type="monotone" 
+                      dataKey="profit" 
+                      stroke={colors.profit} 
+                      strokeWidth={2.5}
+                      fillOpacity={1} 
+                      fill="url(#colorProfit)" 
+                    />
+                  </>
+                ) : (
+                  <Area 
+                    name="Volume"
+                    type="monotone" 
+                    dataKey="volume" 
+                    stroke={colors.volume} 
+                    strokeWidth={2.5}
+                    fillOpacity={1} 
+                    fill="url(#colorVolume)" 
+                  />
+                )}
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         {/* Cube Metadata Context Hint */}
         <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/30 text-xs text-muted-foreground mt-2">
           <Info className="w-4 h-4 text-primary shrink-0" />
           <span>
-            Financial profit is calculated as <b>Net Revenue (LineTotal - Tax) - StandardCost</b>. Discount percentages represent direct sales invoice reductions from standard List Prices inside the SSAS tabular schemas.
+            Revenue sourced from <b>[Measures].[Line Total]</b> via MDX OPENQUERY on the{' '}
+            <b>Entreprise DW</b> SSAS cube. Net Profit is estimated as 35% of Line Total (cost
+            data not available in the current MDX slice).
           </span>
         </div>
       </div>
