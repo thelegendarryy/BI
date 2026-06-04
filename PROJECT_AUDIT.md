@@ -167,7 +167,6 @@ API routes are structured in the App Router format (`route.ts` files inside `src
 | `/api/sales-by-product` | `GET` | Fetches top product revenues; joins SSAS outputs with relational `Products`. | **Completed** |
 | `/api/sales-by-employee` | `GET` | Fetches sales representative rankings; joins SSAS outputs with relational `Employees`. | **Completed** |
 | `/api/sales-by-promotion` | `GET` | Fetches campaign effectiveness; joins SSAS outputs with relational `Promotions`. | **Completed** |
-| `/api/sales-by-customer` | `GET` | Fetches top customers; joins SSAS outputs with relational `Customers`. | **Completed** |
 | `/api/debug/mdx-date` | `GET` | Diagnostic endpoint returning raw date-key grouping records. | **Completed** |
 
 ### 4.2 Services & Repositories Layer

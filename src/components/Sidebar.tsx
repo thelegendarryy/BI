@@ -12,10 +12,6 @@ import {
   Database,
   Menu,
   X,
-  TrendingDown,
-  Globe,
-  ShieldCheck,
-  Activity,
 } from 'lucide-react';
 
 interface NavItem {
@@ -32,11 +28,6 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { id: 'sales', name: 'Sales Performance', icon: BarChart3, group: 'core' },
   { id: 'leaderboard', name: 'Rep Leaderboard', icon: Users, group: 'core' },
   { id: 'promotions', name: 'Promotions Deep-Dive', icon: Percent, group: 'core' },
-  // Advanced Analytics
-  { id: 'forecasting', name: 'Forecasting', icon: TrendingDown, group: 'advanced', badge: 'NEW' },
-  { id: 'geographic', name: 'Geographic Analysis', icon: Globe, group: 'advanced', badge: 'NEW' },
-  { id: 'customers', name: 'Customer Analysis', icon: ShieldCheck, group: 'advanced', badge: 'NEW' },
-  { id: 'quality', name: 'Data Quality', icon: Activity, group: 'advanced', badge: 'NEW' },
 ];
 
 export const Sidebar: React.FC = () => {

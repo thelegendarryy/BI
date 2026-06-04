@@ -138,7 +138,10 @@ export interface OlapKpiResponse {
   totalSales: number;
   totalQuantity: number;
   totalTax: number;
-  totalDiscount: number;
+  totalOrders: number;
+  totalProfit: number;
+  activeBrands: number;
+  activeProducts: number;
   _raw?: Record<string, unknown>;
 }
 
@@ -167,6 +170,7 @@ export interface OlapAdvancedKpiResponse {
 export interface OlapProductSale {
   name: string;
   lineTotal: number;
+  quantity?: number;
 }
 
 /** Response item from GET /api/sales-by-date */
@@ -177,11 +181,6 @@ export interface OlapDateSale {
   profit?: number;
 }
 
-/** Response item from GET /api/sales-by-customer */
-export interface OlapCustomerSale {
-  customer: string;
-  lineTotal: number;
-}
 
 /** Response item from GET /api/sales-by-employee */
 export interface OlapEmployeeSale {
@@ -218,69 +217,6 @@ export interface OlapGeographySale {
 }
 
 /** Response from GET /api/customers-analysis */
-export interface OlapCustomerAnalysis {
-  topCustomers: {
-    customer: string;
-    customerType: string;
-    country: string;
-    lineTotal: number;
-    orderCount: number;
-    avgOrderValue: number;
-  }[];
-  bySegment: {
-    segment: string;
-    lineTotal: number;
-    orderCount: number;
-    customerCount: number;
-  }[];
-  dataSource: 'live' | 'static';
-}
-
-/** Single data point for forecasting */
-export interface ForecastPoint {
-  period: string;
-  actual: number | null;
-  forecast: number | null;
-  movingAvg: number | null;
-  isForecasted: boolean;
-}
-
-/** Response from GET /api/forecasting */
-export interface OlapForecastResponse {
-  data: ForecastPoint[];
-  nextMonthForecast: number;
-  nextQuarterForecast: number;
-  method: string;
-  confidence: number;
-  rSquared: number;
-  dataSource: 'live' | 'static';
-}
-
-/** Response from GET /api/data-quality */
-export interface DataQualityResponse {
-  totalRows: number;
-  nullLineTotals: number;
-  nullCustomers: number;
-  nullEmployees: number;
-  lastOrderDate: string | null;
-  lastRefreshDate: string | null;
-  cubeLinkedServerExists: boolean;
-  cubeStatus: 'connected' | 'disconnected' | 'unknown';
-  dimensionCounts: {
-    brands: number;
-    products: number;
-    customers: number;
-    employees: number;
-    promotions: number;
-    dates: number;
-  };
-  etlIndicators: {
-    totalFactRows: number;
-    estimatedLoadTime: string;
-    dataFreshnessDays: number;
-    status: 'fresh' | 'stale' | 'unknown';
-  };
-}
 
 /** Generic async data state wrapper used by all useOlap* hooks */
 export interface OlapDataState<T> {
@@ -305,21 +241,21 @@ export interface RolePermissions {
 
 export const ROLE_CONFIG: Record<UserRole, RolePermissions> = {
   admin: {
-    tabs: ['executive', 'sales', 'leaderboard', 'promotions', 'forecasting', 'geographic', 'customers', 'quality'],
+    tabs: ['executive', 'sales', 'leaderboard', 'promotions'],
     label: 'Administrator',
     description: 'Full access to all dashboard modules',
     color: 'text-red-500',
   },
   executive: {
-    tabs: ['executive', 'forecasting', 'geographic', 'customers'],
+    tabs: ['executive'],
     label: 'Executive',
-    description: 'Executive KPIs, forecasting, and global analytics',
+    description: 'Executive KPIs and global analytics',
     color: 'text-indigo-500',
   },
   sales_manager: {
-    tabs: ['executive', 'sales', 'leaderboard', 'promotions', 'customers'],
+    tabs: ['executive', 'sales', 'leaderboard', 'promotions'],
     label: 'Sales Manager',
-    description: 'Sales performance, rep rankings, and customer data',
+    description: 'Sales performance, rep rankings, and campaign data',
     color: 'text-emerald-500',
   },
   sales_rep: {

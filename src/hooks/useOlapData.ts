@@ -3,14 +3,12 @@ import type {
   OlapKpiResponse,
   OlapProductSale,
   OlapDateSale,
-  OlapCustomerSale,
   OlapEmployeeSale,
   OlapPromotionSale,
   OlapBrandSale,
   OlapDataState,
   DashboardFilters,
-  OlapGeographySale,
-  OlapCustomerAnalysis
+  OlapGeographySale
 } from '../types/dashboard';
 
 // Helper to construct query string from dashboard filters
@@ -110,13 +108,6 @@ export function useSalesByDate(
   return useOlapFetch<OlapDateSale[]>(`/api/sales-by-date${query}${sep}granularity=${granularity}`);
 }
 
-/**
- * useSalesByCustomer — fetches top-20 customers from /api/sales-by-customer
- */
-export function useSalesByCustomer(filters?: DashboardFilters): OlapDataState<OlapCustomerSale[]> {
-  const query = buildQueryString(filters);
-  return useOlapFetch<OlapCustomerSale[]>(`/api/sales-by-customer${query}`);
-}
 
 /**
  * useSalesByEmployee — fetches employee leaderboard from /api/sales-by-employee
@@ -164,11 +155,4 @@ export function useSalesByDiscountRate(filters?: DashboardFilters): OlapDataStat
   return useOlapFetch<{ data: any[]; dataSource: 'live' | 'static' }>(`/api/sales-by-discount-rate${query}`);
 }
 
-/**
- * useCustomersAnalysis — fetches customers segments and top customer stats
- */
-export function useCustomersAnalysis(filters?: DashboardFilters): OlapDataState<OlapCustomerAnalysis> {
-  const query = buildQueryString(filters);
-  return useOlapFetch<OlapCustomerAnalysis>(`/api/customers-analysis${query}`);
-}
 

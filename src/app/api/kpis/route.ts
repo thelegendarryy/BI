@@ -27,8 +27,12 @@ export async function GET(request: NextRequest) {
           SUM(fs.LineTotal) AS totalSales,
           SUM(fs.Quantity) AS totalQuantity,
           SUM(fs.TaxAmount) AS totalTax,
-          SUM(fs.DiscountAmount) AS totalDiscount
+          COUNT(DISTINCT fs.SalesOrderID) AS totalOrders,
+          SUM(fs.LineTotal - fs.TaxAmount - (fs.Quantity * p.StandardCost)) AS totalProfit,
+          COUNT(DISTINCT fs.BrandID) AS activeBrands,
+          COUNT(DISTINCT fs.ProductID) AS activeProducts
         FROM FactSales fs
+        JOIN Products p ON fs.ProductID = p.ProductID
         ${dateJoin}
         WHERE fs.OrderStatus != 'Cancelled' AND ${whereClause}
       `;
@@ -40,7 +44,10 @@ export async function GET(request: NextRequest) {
         totalSales: Number(row.totalSales ?? 0),
         totalQuantity: Number(row.totalQuantity ?? 0),
         totalTax: Number(row.totalTax ?? 0),
-        totalDiscount: Number(row.totalDiscount ?? 0),
+        totalOrders: Number(row.totalOrders ?? 0),
+        totalProfit: Number(row.totalProfit ?? 0),
+        activeBrands: Number(row.activeBrands ?? 0),
+        activeProducts: Number(row.activeProducts ?? 0),
         dataSource: 'live-sql'
       });
     } catch (error: any) {
@@ -59,7 +66,7 @@ export async function GET(request: NextRequest) {
         [Measures].[Line Total],
         [Measures].[Quantity],
         [Measures].[Tax Amount],
-        [Measures].[Discount Amount]
+        [Measures].[Fact Sales Nombre]
       } ON COLUMNS
     FROM [${CUBE}]
   `;
@@ -88,16 +95,33 @@ export async function GET(request: NextRequest) {
       parseOlapNumber(row['Tax Amount']) ||
       parseOlapNumber(Object.values(row)[2] as any);
 
-    const totalDiscount =
-      parseOlapNumber(row['[Measures].[Discount Amount]']) ||
-      parseOlapNumber(row['Discount Amount']) ||
+    const totalOrders =
+      parseOlapNumber(row['[Measures].[Fact Sales Nombre]']) ||
+      parseOlapNumber(row['Fact Sales Nombre']) ||
       parseOlapNumber(Object.values(row)[3] as any);
+
+    // Fetch profit and active counts in parallel from SQL Server
+    const pool = await getPool();
+    const extraQuery = `
+      SELECT
+        SUM(fs.LineTotal - fs.TaxAmount - (fs.Quantity * p.StandardCost)) AS totalProfit,
+        COUNT(DISTINCT fs.BrandID) AS activeBrands,
+        COUNT(DISTINCT fs.ProductID) AS activeProducts
+      FROM FactSales fs
+      JOIN Products p ON fs.ProductID = p.ProductID
+      WHERE fs.OrderStatus != 'Cancelled'
+    `;
+    const extraResult = await pool.request().query(extraQuery);
+    const extraRow = extraResult.recordset[0] ?? {};
 
     return NextResponse.json({
       totalSales,
       totalQuantity,
       totalTax,
-      totalDiscount,
+      totalOrders,
+      totalProfit: Number(extraRow.totalProfit ?? 0),
+      activeBrands: Number(extraRow.activeBrands ?? 0),
+      activeProducts: Number(extraRow.activeProducts ?? 0),
       dataSource: 'live-ssas'
     });
   } catch (error: any) {
@@ -109,12 +133,16 @@ export async function GET(request: NextRequest) {
       const pool = await getPool();
       const query = `
         SELECT
-          SUM(LineTotal) AS totalSales,
-          SUM(Quantity) AS totalQuantity,
-          SUM(TaxAmount) AS totalTax,
-          SUM(DiscountAmount) AS totalDiscount
-        FROM FactSales
-        WHERE OrderStatus != 'Cancelled'
+          SUM(fs.LineTotal) AS totalSales,
+          SUM(fs.Quantity) AS totalQuantity,
+          SUM(fs.TaxAmount) AS totalTax,
+          COUNT(DISTINCT fs.SalesOrderID) AS totalOrders,
+          SUM(fs.LineTotal - fs.TaxAmount - (fs.Quantity * p.StandardCost)) AS totalProfit,
+          COUNT(DISTINCT fs.BrandID) AS activeBrands,
+          COUNT(DISTINCT fs.ProductID) AS activeProducts
+        FROM FactSales fs
+        JOIN Products p ON fs.ProductID = p.ProductID
+        WHERE fs.OrderStatus != 'Cancelled'
       `;
       const result = await pool.request().query(query);
       const row = result.recordset[0] ?? {};
@@ -123,7 +151,10 @@ export async function GET(request: NextRequest) {
         totalSales: Number(row.totalSales ?? 0),
         totalQuantity: Number(row.totalQuantity ?? 0),
         totalTax: Number(row.totalTax ?? 0),
-        totalDiscount: Number(row.totalDiscount ?? 0),
+        totalOrders: Number(row.totalOrders ?? 0),
+        totalProfit: Number(row.totalProfit ?? 0),
+        activeBrands: Number(row.activeBrands ?? 0),
+        activeProducts: Number(row.activeProducts ?? 0),
         dataSource: 'live-sql'
       });
     } catch (sqlErr: any) {
@@ -134,4 +165,3 @@ export async function GET(request: NextRequest) {
     }
   }
 }
-

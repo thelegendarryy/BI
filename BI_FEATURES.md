@@ -28,9 +28,6 @@ All monetary measures are in **USD**. The system computes measures either live f
 | **Revenue Growth %** | `(YTD - PY) / PY × 100` | Computed |
 | **Profit Margin %** | `Estimated Profit / Total Revenue × 100` | Computed |
 | **Discount Impact** | `Sum(DiscountAmount)` for analysis period | SQL DW / SSAS |
-| **Next Month Forecast** | Blended linear regression + MA projection | Forecasting lib |
-| **Next Quarter Forecast** | 3-month aggregate projection | Forecasting lib |
-| **Model Confidence** | R² based, adjusted for data volume | Forecasting lib |
 
 ---
 
@@ -62,25 +59,6 @@ FROM [Entreprise DW]
 
 ---
 
-## 3. Forecasting Methodology
-
-The Forecasting module (`src/lib/forecasting.ts`) uses a **blended model**:
-
-| Method | Weight | Description |
-|--------|--------|-------------|
-| Ordinary Least Squares (Linear Regression) | 60% | Fits a linear trend to historical monthly revenue |
-| Simple Moving Average (3-month window) | 40% | Smoothed average of last 3 months |
-
-**Formula:**
-```
-forecast(t+n) = regression.predict(t+n) × 0.6 + movingAvg × 0.4
-```
-
-**Accuracy Metric:** R² (coefficient of determination). R² = 1.0 → perfect linear trend. R² < 0.5 → high seasonality / external drivers.
-
-**Confidence Score:** `confidence = (R² × 0.7 + dataCoverage × 0.3) × 100`
-- `dataCoverage = min(months / 24, 1)` — score increases with more historical data.
-
 ---
 
 ## 4. Dimensions
@@ -97,7 +75,7 @@ All dimensions map to SSAS dimension files in `CubeProject/CubeProject/`.
 | Promotion | PromotionID | `Promotions.dim` | `Promotions` |
 
 > [!NOTE]
-> **Known Gap**: Current SSAS dimension configuration only exports surrogate keys (IDs) as attributes. Descriptive labels (e.g. `BrandName`, `EmployeeName`) must be joined from relational tables in the backend API. See the architecture note in Data Quality page.
+> **Known Gap**: Current SSAS dimension configuration only exports surrogate keys (IDs) as attributes. Descriptive labels (e.g. `BrandName`, `EmployeeName`) must be joined from relational tables in the backend API. See the architecture note in [PROJECT_AUDIT.md](file:///f:/C/me/GLID2%20Projet/Datawarehouse/BI/PROJECT_AUDIT.md).
 
 ### SSAS Dimension Enhancement Guide
 
@@ -185,14 +163,10 @@ WITH MEMBER [Measures].[Avg Discount Rate] AS
 
 | Page | Tab ID | Components | Data Sources |
 |------|--------|-----------|--------------|
-| Executive Overview | `executive` | TimeIntelligence, KPI cards, AdvancedKPISection, Sales Trend chart | `/api/kpis`, `/api/kpis-advanced`, `/api/sales-by-date` |
+| Executive Overview | `executive` | TimeIntelligence, KPI cards, ExecutiveOlapInsights, Sales Trend chart | `/api/kpis`, `/api/kpis-advanced`, `/api/sales-by-date` |
 | Sales Performance | `sales` | Brand bar chart, Product pie chart, Country chart | `/api/sales-by-brand`, `/api/sales-by-product` |
 | Rep Leaderboard | `leaderboard` | Employee bar chart, ranking table | `/api/sales-by-employee` |
 | Promotions Deep-Dive | `promotions` | Promotion bar chart, discount analysis | `/api/sales-by-promotion` |
-| Forecasting | `forecasting` | Area chart (actual + forecast), KPI cards | `/api/forecasting` |
-| Geographic Analysis | `geographic` | Country/city bar charts, revenue table | `/api/sales-by-geography` |
-| Customer Analysis | `customers` | Segment pie, top customers bar, customer table | `/api/customers-analysis` |
-| Data Quality | `quality` | Health cards, ETL indicators, dimension sizes | `/api/data-quality` |
 
 ---
 
@@ -204,9 +178,6 @@ All major data views support **CSV export** via the `export.ts` utility:
 |------|--------------|-------------|
 | Rep Leaderboard | "📥 Export CSV" in chart header | `SalesCube_RepLeaderboard.csv` |
 | Sales Performance | "📥 Export" in brand chart | `SalesCube_SalesByBrand.csv` |
-| Forecasting | "📥 Export CSV" in page header | `SalesCube_Forecast.csv` |
-| Geographic | "📥 Export CSV" in page header | `SalesCube_Geographic_Countries.csv` |
-| Customer Analysis | "📥 Export CSV" in page header | `SalesCube_TopCustomers.csv` |
 
 Export format: UTF-8 CSV with BOM (Excel compatible).
 
@@ -218,26 +189,12 @@ The RBAC system demonstrates permission-based access using a client-side mock. I
 
 | Role | Accessible Tabs | Icon |
 |------|----------------|------|
-| Administrator | All 8 tabs | 🔑 |
-| Executive | Executive, Forecasting, Geographic, Customers | 💼 |
-| Sales Manager | Executive, Sales, Leaderboard, Promotions, Customers | 📊 |
+| Administrator | All 4 tabs | 🔑 |
+| Executive | Executive Overview | 💼 |
+| Sales Manager | Executive, Sales, Leaderboard, Promotions | 📊 |
 | Sales Rep | Leaderboard, Sales | 🧑‍💼 |
 
 The `AuthContext.tsx` provides `canAccess(tabId)` which the Sidebar uses to filter navigation items.
-
----
-
-## 10. Data Quality Metrics
-
-The Data Quality monitor runs the following checks:
-
-| Check | Query | Pass Condition |
-|-------|-------|---------------|
-| Null LineTotal | `SUM(CASE WHEN LineTotal IS NULL THEN 1 ELSE 0 END)` | = 0 |
-| Null CustomerID | `SUM(CASE WHEN CustomerID IS NULL THEN 1 ELSE 0 END)` | = 0 |
-| Null EmployeeID | `SUM(CASE WHEN SalesRepID IS NULL THEN 1 ELSE 0 END)` | = 0 |
-| Cube linked server | `SELECT COUNT(*) FROM sys.servers WHERE name='SSAS_CUBE'` | > 0 |
-| Data freshness | Days since `MAX(OrderDate)` | < 7 = fresh |
 
 ---
 

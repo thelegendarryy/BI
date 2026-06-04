@@ -12,12 +12,6 @@ import { PromotionsDeepDive } from './../components/PromotionsDeepDive';
 import { ChartSkeleton } from './../components/LoadingSkeleton';
 import { CalendarRange, Sun, Moon } from 'lucide-react';
 
-// Lazy-load the heavier new pages for better initial load performance
-const ForecastingDashboard = lazy(() => import('./../components/ForecastingDashboard'));
-const GeographicAnalysis = lazy(() => import('./../components/GeographicAnalysis'));
-const CustomerAnalysis = lazy(() => import('./../components/CustomerAnalysis'));
-const DataQuality = lazy(() => import('./../components/DataQuality'));
-
 // Tabs where the FiltersBar should be shown (global filter only applies to core views)
 const TABS_WITH_FILTERS = new Set(['executive', 'sales', 'leaderboard', 'promotions']);
 
@@ -39,22 +33,6 @@ const HEADER_MAP: Record<string, HeaderInfo> = {
   promotions: {
     title: 'Promotion Elasticity & Margin Deep-Dive',
     subtitle: 'Correlate marketing campaign types and discount rates with aggregate volume vs net returns.',
-  },
-  forecasting: {
-    title: 'Sales Forecasting',
-    subtitle: 'Linear regression + moving average model · 3-month ahead projection · confidence intervals',
-  },
-  geographic: {
-    title: 'Geographic Revenue Analysis',
-    subtitle: 'Country and city-level revenue breakdown with market share analysis.',
-  },
-  customers: {
-    title: 'Customer Segmentation & Analysis',
-    subtitle: 'Top accounts, revenue by customer type, and order value profiling.',
-  },
-  quality: {
-    title: 'Data Warehouse Quality Monitor',
-    subtitle: 'DW health checks, null audits, dimension sizes, ETL freshness, and SSAS cube status.',
   },
 };
 
@@ -135,27 +113,7 @@ function DashboardViewport() {
           {activeTab === 'leaderboard' && <EmployeeLeaderboard />}
           {activeTab === 'promotions' && <PromotionsDeepDive />}
 
-          {/* Advanced tabs (lazy loaded) */}
-          {activeTab === 'forecasting' && (
-            <Suspense fallback={<PageLoader />}>
-              <ForecastingDashboard />
-            </Suspense>
-          )}
-          {activeTab === 'geographic' && (
-            <Suspense fallback={<PageLoader />}>
-              <GeographicAnalysis />
-            </Suspense>
-          )}
-          {activeTab === 'customers' && (
-            <Suspense fallback={<PageLoader />}>
-              <CustomerAnalysis />
-            </Suspense>
-          )}
-          {activeTab === 'quality' && (
-            <Suspense fallback={<PageLoader />}>
-              <DataQuality />
-            </Suspense>
-          )}
+          {/* Advanced tabs (lazy loaded) - None remaining */}
         </div>
       </main>
       

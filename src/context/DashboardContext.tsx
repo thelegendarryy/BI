@@ -29,6 +29,7 @@ interface DashboardContextType {
     totalRevenue: number;
     totalUnits: number;
     avgDiscountAmount: number;
+    totalTax: number;
     activeCustomers: number;
     totalProfit: number;
     avgMarginPercent: number;
@@ -149,16 +150,15 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
     let totalUnits = 0;
     let totalDiscountAmount = 0;
     let totalCost = 0;
+    let totalTax = 0;
     const uniqueCustomers = new Set<number>();
     const orderIds = new Set<number>();
 
     filteredSales.forEach(record => {
-      // Do not count cancelled orders in active financial stats unless requested,
-      // but standard practice is to exclude Cancelled from actual revenue or track it separately.
-      // Let's include all non-cancelled orders for standard KPIs, cancelled can be filtered by OrderStatus.
       totalRevenue += record.LineTotal;
       totalUnits += record.Quantity;
       totalDiscountAmount += record.DiscountAmount;
+      totalTax += record.TaxAmount;
       
       const cost = record.Quantity * record.Product.StandardCost;
       totalCost += cost;
@@ -167,10 +167,6 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
       orderIds.add(record.SalesOrderID);
     });
 
-    // Net Revenue = Total Revenue - Tax
-    // Profit = Net Revenue - Total Cost
-    // In our model, let's keep it simple: LineTotal represents final invoiced amounts.
-    // Let's compute profit as: NetSales = LineTotal - TaxAmount. NetSales - cost = profit.
     let netSales = 0;
     filteredSales.forEach(r => {
       netSales += (r.LineTotal - r.TaxAmount);
@@ -183,6 +179,7 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
       totalRevenue,
       totalUnits,
       avgDiscountAmount,
+      totalTax,
       activeCustomers: uniqueCustomers.size,
       totalProfit,
       avgMarginPercent,

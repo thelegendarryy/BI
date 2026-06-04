@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * PromotionsDeepDive.tsx — Promotion Elasticity & Margin Deep-Dive view
+ * PromotionsDeepDive.tsx — Discount Elasticity & Product Performance Deep-Dive
  *
- * Data source:
- * - Promotions bar chart: /api/sales-by-promotion (OLAP)
+ * Data sources:
+ * - Top Products chart: /api/sales-by-product (SQL DW / SSAS)
  * - Discount sensitivity chart: /api/sales-by-discount-rate (DW query with filters)
  */
 
 import React, { useState, useMemo } from 'react';
 import { useDashboard } from '../context/DashboardContext';
-import { useSalesByPromotion, useSalesByDiscountRate } from '../hooks/useOlapData';
-import { ChartSkeleton, OlapErrorBanner, DataSourceBadge, EmptyState } from './LoadingSkeleton';
+import { useSalesByProduct, useSalesByDiscountRate } from '../hooks/useOlapData';
+import { ChartSkeleton, OlapErrorBanner, DataSourceBadge } from './LoadingSkeleton';
 import { 
   BarChart, 
   Bar, 
@@ -24,30 +24,37 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { Percent, Sparkles, TrendingUp, Info, HelpCircle } from 'lucide-react';
+import { Percent, Package, TrendingUp, Info, HelpCircle, Trophy, Star } from 'lucide-react';
 
 export const PromotionsDeepDive: React.FC = () => {
-  const { promotionsData, discountDeepDive, filters, theme, demoMode, setDemoMode } = useDashboard();
+  const { discountDeepDive, categoryData: staticProductData, filters, theme, demoMode, setDemoMode } = useDashboard();
 
-  // Live OLAP data hooks (with filter parameters)
-  const { data: olapPromotions, loading: promoLoading, error: promoError } = useSalesByPromotion(filters);
+  // Live data hooks
+  const { data: olapProducts, loading: productsLoading, error: productsError } = useSalesByProduct(filters);
   const { data: olapDiscountRes, loading: discountLoading, error: discountError } = useSalesByDiscountRate(filters);
 
   const olapDiscount = olapDiscountRes?.data ?? null;
   const olapDiscountSource = olapDiscountRes?.dataSource ?? 'static';
 
-  // Determine availability
-  const isPromoLive = !demoMode && !promoLoading && !promoError && olapPromotions !== null;
+  // Availability flags
+  const isProductsLive = !demoMode && !productsLoading && !productsError && olapProducts !== null && olapProducts.length > 0;
   const isDiscountLive = !demoMode && !discountLoading && !discountError && olapDiscount !== null;
 
   const isDark = theme === 'dark';
   const chartTheme = {
-    promoBar: isDark ? '#818cf8' : '#4f46e5',
+    productBar: isDark ? '#818cf8' : '#4f46e5',
     volumeBar: isDark ? '#60a5fa' : '#2563eb',
     marginLine: isDark ? '#34d399' : '#10b981',
     text: isDark ? '#94a3b8' : '#64748b',
     grid: isDark ? '#1e293b' : '#e2e8f0',
+    accent: isDark ? '#f59e0b' : '#d97706',
   };
+
+  const RANK_COLORS = [
+    'bg-amber-500/20 text-amber-500 border-amber-500/30',
+    'bg-slate-400/20 text-slate-400 border-slate-400/30',
+    'bg-orange-600/20 text-orange-600 border-orange-600/30',
+  ];
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('en-US', {
@@ -58,33 +65,22 @@ export const PromotionsDeepDive: React.FC = () => {
 
   const formatNumber = (value: number) => new Intl.NumberFormat('en-US').format(value);
 
-  // Transform OLAP data to chart format
-  const olapChartData = useMemo(() => {
-    return olapPromotions?.map((p) => ({
-      name: p.promotionType === 'Unknown' || p.promotionType === null ? 'Standard Sales (No Promotion)' : p.promotionType,
+  // Top 10 products from live data
+  const topProducts = useMemo(() => {
+    const source = isProductsLive ? (olapProducts ?? []) : [];
+    const sorted = [...source].sort((a, b) => b.lineTotal - a.lineTotal).slice(0, 10);
+    const totalRevenue = sorted.reduce((s, p) => s + p.lineTotal, 0) || 1;
+    return sorted.map((p, i) => ({
+      rank: i + 1,
+      name: p.name,
       revenue: Math.round(p.lineTotal),
-      volume: p.quantity,
-      avgDiscountPercent: p.avgDiscountPercent,
-    })) ?? [];
-  }, [olapPromotions]);
+      quantity: p.quantity ?? 0,
+      share: Math.round((p.lineTotal / totalRevenue) * 1000) / 10,
+    }));
+  }, [isProductsLive, olapProducts]);
 
-  // If in demo mode, use mock promotionsData. Otherwise, if live is available, use it. Else empty.
-  const promoChartData = useMemo(() => {
-    if (demoMode) return promotionsData;
-    return isPromoLive ? olapChartData : [];
-  }, [demoMode, isPromoLive, olapChartData, promotionsData]);
-
-  // Determine if promotions data is actually empty (meaning no promotional campaigns exist in the live DB)
-  const isPromoEmpty = useMemo(() => {
-    if (demoMode) return false;
-    if (promoLoading || promoError) return false;
-    // Empty if no data, or if the only entry is standard sales (no actual campaigns run)
-    return (
-      promoChartData.length === 0 ||
-      (promoChartData.length === 1 && 
-        (promoChartData[0].name.includes('No Promotion') || promoChartData[0].name.includes('Standard Sales')))
-    );
-  }, [demoMode, promoLoading, promoError, promoChartData]);
+  // Chart data — horizontal bar
+  const productChartData = useMemo(() => topProducts.map(p => ({ name: p.name.length > 22 ? p.name.slice(0, 21) + '…' : p.name, revenue: p.revenue, share: p.share, quantity: p.quantity })), [topProducts]);
 
   // Transform discount elasticity data
   const discountChartData = useMemo(() => {
@@ -92,23 +88,23 @@ export const PromotionsDeepDive: React.FC = () => {
     return isDiscountLive ? (olapDiscount || []) : [];
   }, [demoMode, isDiscountLive, olapDiscount, discountDeepDive]);
 
-  // Custom tooltip for promotion comparison
-  const PromoTooltip = ({ active, payload, label }: any) => {
+  // Custom tooltip for product performance chart
+  const ProductTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-card border border-border p-3.5 rounded-xl shadow-lg text-xs space-y-1">
-          <p className="font-bold text-foreground mb-1">{label}</p>
+        <div className="bg-card border border-border p-3.5 rounded-xl shadow-lg text-xs space-y-1 min-w-[180px]">
+          <p className="font-bold text-foreground mb-1 border-b border-border/50 pb-1">{label}</p>
           <div className="flex justify-between gap-4 items-center">
             <span className="text-muted-foreground">Revenue:</span>
-            <span className="font-semibold text-primary">{formatCurrency(payload[0].value)}</span>
+            <span className="font-semibold text-primary">{formatCurrency(payload[0]?.value ?? 0)}</span>
           </div>
           <div className="flex justify-between gap-4 items-center">
-            <span className="text-muted-foreground">Volume Sold:</span>
-            <span className="font-semibold text-foreground">{formatNumber(payload[0].payload.volume)} units</span>
+            <span className="text-muted-foreground">Units Sold:</span>
+            <span className="font-semibold text-foreground">{formatNumber(payload[0]?.payload?.quantity ?? 0)}</span>
           </div>
           <div className="flex justify-between gap-4 items-center border-t border-border/40 pt-1 mt-1">
-            <span className="text-muted-foreground font-medium">Avg Discount Rate:</span>
-            <span className="font-bold text-amber-500">{payload[0].payload.avgDiscountPercent}%</span>
+            <span className="text-muted-foreground font-medium">Revenue Share:</span>
+            <span className="font-bold text-amber-500">{payload[0]?.payload?.share ?? 0}%</span>
           </div>
         </div>
       );
@@ -152,26 +148,17 @@ export const PromotionsDeepDive: React.FC = () => {
     return null;
   };
 
-  // Dynamic Insight Generation
-  const promoInsight = useMemo(() => {
-    if (demoMode) {
-      return "The data demonstrates standard retail price elasticity. Zero discount sales generate the highest average gross profit margin (~53%), but limit transaction velocity. Transitioning to higher discount brackets (e.g. 10% to 15%) drives significantly larger volume sales, yet the profit margins decay steadily. Black Friday (20% discount) results in the highest volume spikes, but represents the lowest profit margin point (~34%), illustrating the inflection trade-off between volume scale and net returns.";
+  // Top Products Insight
+  const productInsight = useMemo(() => {
+    if (!isProductsLive || topProducts.length === 0) {
+      return 'Connect to the SQL Server Data Warehouse to view live product performance rankings.';
     }
-    if (isPromoEmpty) {
-      return "No promotion campaigns are active in the current data warehouse load. 100% of generated revenue is categorized as Standard Sales (No Promotion). To view how promotional campaign impact is visualized, enable Presentation Demo Mode in the header.";
-    }
-    if (!isPromoLive || promoChartData.length === 0) {
-      return "OLAP query is currently unavailable. Ensure the database connection is running to view live campaign performance insights.";
-    }
-
-    // Sort by revenue
-    const nonStd = promoChartData.filter(d => !d.name.includes('Standard') && !d.name.includes('No Promotion'));
-    if (nonStd.length === 0) {
-      return "Standard retail sales represent the total transaction volume. No separate promotional campaign segments were registered in the filtered dataset.";
-    }
-    const topPromo = [...nonStd].sort((a, b) => b.revenue - a.revenue)[0];
-    return `Based on live SSAS data, the campaign "${topPromo.name}" is the top performer, generating ${formatCurrency(topPromo.revenue)} in revenue across ${formatNumber(topPromo.volume)} units sold at an average discount of ${topPromo.avgDiscountPercent}%. This indicates targeted promotions successfully drive the largest order quantities.`;
-  }, [demoMode, isPromoEmpty, isPromoLive, promoChartData]);
+    const top1 = topProducts[0];
+    const top3Revenue = topProducts.slice(0, 3).reduce((s, p) => s + p.revenue, 0);
+    const totalRevenue = topProducts.reduce((s, p) => s + p.revenue, 0) || 1;
+    const top3Share = Math.round((top3Revenue / totalRevenue) * 1000) / 10;
+    return `Based on live warehouse data, "${top1.name}" is the highest-revenue product, generating ${formatCurrency(top1.revenue)} and representing ${top1.share}% of filtered revenue. The top 3 products together account for ${top3Share}% of total sales, indicating ${top3Share > 50 ? 'high SKU concentration — a business risk worth monitoring.' : 'healthy product diversification across the catalog.'}`;
+  }, [isProductsLive, topProducts]);
 
   const elasticityInsight = useMemo(() => {
     if (demoMode) {
@@ -225,73 +212,99 @@ export const PromotionsDeepDive: React.FC = () => {
         </button>
       </div>
 
-      {/* Error banner - only shown when NOT in demo mode */}
-      {!demoMode && promoError && (
-        <OlapErrorBanner message={promoError} endpoint="/api/sales-by-promotion" />
+      {/* Top Products Performance */}
+      {!demoMode && productsError && (
+        <OlapErrorBanner message={productsError} endpoint="/api/sales-by-product" />
       )}
 
-      {/* Promotion Slices Overview */}
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/10 text-primary rounded-xl">
-              <Sparkles className="w-4 h-4" />
+              <Trophy className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-foreground">Promotion Campaigns Performance</h3>
+              <h3 className="text-sm font-bold text-foreground">Top Products Performance</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {demoMode 
-                  ? 'Revenue and volume by promotion type — static demonstration data.'
-                  : 'Live MDX: [Promotions].[Promotion Type] × [Measures].[Line Total, Quantity]'}
+                Live SQL: Top 10 products ranked by revenue — FactSales × Products
               </p>
             </div>
           </div>
-          <DataSourceBadge 
-            source={demoMode ? 'demo' : (isPromoLive ? 'ssas' : 'static')} 
-            loading={!demoMode && promoLoading} 
+          <DataSourceBadge
+            isLive={isProductsLive}
+            loading={!demoMode && productsLoading}
           />
         </div>
 
-        <div className="h-[280px] w-full text-foreground select-none flex flex-col justify-center">
-          {promoLoading && !demoMode ? (
-            <ChartSkeleton height={280} />
-          ) : isPromoEmpty ? (
-            <div className="border border-dashed border-border/60 rounded-xl bg-secondary/10 py-6">
-              <EmptyState 
-                title="No Campaign Records Available" 
-                message="All 7,306 sales records in the current warehouse load have NULL PromotionID. Enable Presentation Demo Mode above to preview campaign visuals."
-              />
-            </div>
-          ) : promoChartData.length === 0 && !demoMode ? (
+        {/* Horizontal bar chart */}
+        <div className="h-[320px] w-full text-foreground select-none">
+          {productsLoading && !demoMode ? (
+            <ChartSkeleton height={320} />
+          ) : productChartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-              Failed to load live data. Click "Presentation Demo Mode" to view mock visualization.
+              Connecting to database…
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={promoChartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartTheme.grid} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke={chartTheme.text} 
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  dy={8}
-                />
-                <YAxis 
-                  stroke={chartTheme.text} 
+              <BarChart
+                data={productChartData}
+                layout="vertical"
+                margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={chartTheme.grid} />
+                <XAxis
+                  type="number"
+                  stroke={chartTheme.text}
                   fontSize={10}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(val) => `$${val / 1000}k`}
-                  dx={-8}
+                  tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`}
                 />
-                <Tooltip content={<PromoTooltip />} />
-                <Bar dataKey="revenue" fill={chartTheme.promoBar} radius={[6, 6, 0, 0]} barSize={40} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  stroke={chartTheme.text}
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  width={130}
+                />
+                <Tooltip content={<ProductTooltip />} />
+                <Bar
+                  dataKey="revenue"
+                  fill={chartTheme.productBar}
+                  radius={[0, 6, 6, 0]}
+                  barSize={18}
+                  label={{
+                    position: 'right',
+                    formatter: (val: any) => `${((Number(val) / (productChartData.reduce((s, p) => s + p.revenue, 0) || 1)) * 100).toFixed(1)}%`,
+                    style: { fontSize: 9, fill: chartTheme.text },
+                  }}
+                />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
+
+        {/* Ranked table */}
+        {topProducts.length > 0 && (
+          <div className="mt-2 space-y-1.5">
+            <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Revenue Ranking — Top {topProducts.length}</h4>
+            <div className="grid gap-1.5">
+              {topProducts.map((p) => (
+                <div key={p.rank} className="flex items-center gap-3 p-2.5 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors">
+                  <span className={`w-6 h-6 rounded-lg border text-[10px] font-bold flex items-center justify-center shrink-0 ${
+                    p.rank <= 3 ? (RANK_COLORS[p.rank - 1] || '') : 'bg-muted/30 text-muted-foreground border-border/30'
+                  }`}>{p.rank}</span>
+                  <span className="flex-1 text-xs text-foreground truncate font-medium">{p.name}</span>
+                  <span className="text-xs font-bold text-foreground shrink-0">{formatCurrency(p.revenue)}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0 w-14 text-right">{formatNumber(p.quantity)} units</span>
+                  <span className="text-[10px] font-semibold text-primary shrink-0 w-10 text-right">{p.share}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Discount Rate Sensitivity Analysis */}
@@ -394,11 +407,11 @@ export const PromotionsDeepDive: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-2 border-t border-border/40">
           <div className="p-4 bg-primary/[0.02] border border-primary/10 rounded-2xl space-y-2">
             <h4 className="text-xs font-bold text-primary flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5" />
-              Campaign Performance Insight
+              <Star className="w-3.5 h-3.5" />
+              Top Product Performance Insight
             </h4>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              {promoInsight}
+              {productInsight}
             </p>
           </div>
 

@@ -24,7 +24,8 @@ export async function GET(request: NextRequest) {
       const query = `
         SELECT 
           p.ProductName AS name,
-          SUM(fs.LineTotal) AS lineTotal
+          SUM(fs.LineTotal) AS lineTotal,
+          SUM(fs.Quantity) AS quantity
         FROM FactSales fs
         JOIN Products p ON fs.ProductID = p.ProductID
         ${dateJoin}
@@ -36,7 +37,8 @@ export async function GET(request: NextRequest) {
       const result = await pool.request().query(query);
       const data = result.recordset.map(row => ({
         name: String(row.name),
-        lineTotal: Number(row.lineTotal)
+        lineTotal: Number(row.lineTotal),
+        quantity: Number(row.quantity ?? 0)
       }));
 
       return NextResponse.json(data);
@@ -52,7 +54,10 @@ export async function GET(request: NextRequest) {
   // Unfiltered: try SSAS linked server
   const mdx = `
     SELECT
-      {[Measures].[Line Total]} ON COLUMNS,
+      {
+        [Measures].[Line Total],
+        [Measures].[Quantity]
+      } ON COLUMNS,
       NON EMPTY
       [Products].[Product ID].Members ON ROWS
     FROM [${CUBE}]
@@ -61,10 +66,14 @@ export async function GET(request: NextRequest) {
   const tsql = `
     SELECT 
       p.ProductName AS name,
-      SUM(CAST(oq."[Measures].[Line Total]" AS DECIMAL(18,2))) AS lineTotal
+      SUM(CAST(oq."[Measures].[Line Total]" AS DECIMAL(18,2))) AS lineTotal,
+      SUM(CAST(oq."[Measures].[Quantity]" AS INT)) AS quantity
     FROM OPENQUERY(SSAS_CUBE, '
       SELECT
-        {[Measures].[Line Total]} ON COLUMNS,
+        {
+          [Measures].[Line Total],
+          [Measures].[Quantity]
+        } ON COLUMNS,
         NON EMPTY
         [Products].[Product ID].Members ON ROWS
       FROM [${CUBE}]
@@ -81,7 +90,8 @@ export async function GET(request: NextRequest) {
     const result = await pool.request().query(tsql);
     const data = result.recordset.map(row => ({
       name: String(row.name),
-      lineTotal: Number(row.lineTotal)
+      lineTotal: Number(row.lineTotal),
+      quantity: Number(row.quantity ?? 0)
     }));
 
     return NextResponse.json(data);
@@ -95,7 +105,8 @@ export async function GET(request: NextRequest) {
       const query = `
         SELECT 
           p.ProductName AS name,
-          SUM(fs.LineTotal) AS lineTotal
+          SUM(fs.LineTotal) AS lineTotal,
+          SUM(fs.Quantity) AS quantity
         FROM FactSales fs
         JOIN Products p ON fs.ProductID = p.ProductID
         WHERE fs.OrderStatus != 'Cancelled'
@@ -105,7 +116,8 @@ export async function GET(request: NextRequest) {
       const result = await pool.request().query(query);
       const data = result.recordset.map(row => ({
         name: String(row.name),
-        lineTotal: Number(row.lineTotal)
+        lineTotal: Number(row.lineTotal),
+        quantity: Number(row.quantity ?? 0)
       }));
       return NextResponse.json(data);
     } catch (sqlErr: any) {

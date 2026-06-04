@@ -19,7 +19,7 @@ import {
   OlapErrorBanner,
   DataSourceBadge,
 } from './LoadingSkeleton';
-import AdvancedKPISection from './AdvancedKPISection';
+import ExecutiveOlapInsights from './ExecutiveOlapInsights';
 import TimeIntelligence from './TimeIntelligence';
 import { 
   DollarSign, 
@@ -94,8 +94,8 @@ export const ExecutiveOverview: React.FC = () => {
   const displayKpis = {
     totalRevenue: kpisLive ? olapKpis!.totalSales : staticKpis.totalRevenue,
     totalUnits: kpisLive ? olapKpis!.totalQuantity : staticKpis.totalUnits,
-    totalTax: kpisLive ? olapKpis!.totalTax : 0,
-    totalDiscount: kpisLive ? olapKpis!.totalDiscount : staticKpis.avgDiscountAmount,
+    totalTax: kpisLive ? olapKpis!.totalTax : staticKpis.totalTax,
+    totalOrders: kpisLive ? olapKpis!.totalOrders : staticKpis.orderCount,
   };
 
   // --- Chart data: prefer OLAP, fallback to static ---
@@ -239,10 +239,10 @@ export const ExecutiveOverview: React.FC = () => {
               <div className="flex items-start justify-between">
                 <div>
                   <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    {kpisLive ? 'Total Tax' : 'Avg Discount'}
+                    Total Tax
                   </span>
                   <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                    {formatCurrency(kpisLive ? displayKpis.totalTax : displayKpis.totalDiscount)}
+                    {formatCurrency(displayKpis.totalTax)}
                   </h2>
                 </div>
                 <div className="p-2.5 bg-amber-500/10 text-amber-500 rounded-xl">
@@ -250,37 +250,29 @@ export const ExecutiveOverview: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
-                {kpisLive
-                  ? <DataSourceBadge isLive={true} />
-                  : <span className="text-xs font-semibold text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full">
-                      Avg Deal: {formatNumber(staticKpis.totalUnits > 0 ? staticKpis.totalRevenue / staticKpis.orderCount : 0)}
-                    </span>
-                }
+                <DataSourceBadge isLive={kpisLive} />
                 <span className="text-[10px] text-muted-foreground/60">Tax Amount</span>
               </div>
             </div>
 
-            {/* Total Discount — from [Measures].[Discount Amount] */}
+            {/* Total Orders — from [Measures].[Fact Sales Nombre] */}
             <div className="premium-card bg-card border border-border rounded-2xl p-5 flex flex-col justify-between min-h-[140px]">
               <div className="flex items-start justify-between">
                 <div>
                   <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Total Discounts
+                    Total Orders
                   </span>
                   <h2 className="text-2xl font-bold tracking-tight text-foreground mt-1">
-                    {formatCurrency(kpisLive ? olapKpis!.totalDiscount : staticKpis.avgDiscountAmount)}
+                    {formatNumber(displayKpis.totalOrders)}
                   </h2>
                 </div>
                 <div className="p-2.5 bg-emerald-500/10 text-emerald-500 rounded-xl">
-                  <Percent className="w-5 h-5" />
+                  <ShoppingBag className="w-5 h-5" />
                 </div>
               </div>
               <div className="flex items-center justify-between mt-4">
-                {kpisLive
-                  ? <DataSourceBadge isLive={true} />
-                  : renderTrendBadge(kpiTrends.customersGrowth)
-                }
-                <span className="text-[10px] text-muted-foreground/60">Discount Amount</span>
+                <DataSourceBadge isLive={kpisLive} />
+                <span className="text-[10px] text-muted-foreground/60">Sales Orders</span>
               </div>
             </div>
           </>
@@ -288,7 +280,7 @@ export const ExecutiveOverview: React.FC = () => {
       </div>
 
       {/* ── Advanced KPI Section ── */}
-      <AdvancedKPISection />
+      <ExecutiveOlapInsights />
 
       {/* Time Series Charts Card */}
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
