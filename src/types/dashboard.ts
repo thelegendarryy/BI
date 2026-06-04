@@ -13,7 +13,7 @@ export interface Product {
   ProductCode: string;
   ProductName: string;
   CategoryID: number;
-  CategoryName: string; // Helper for easy filtering/slicing
+  CategoryName: string;
   BrandID: number;
   UnitID: string;
   StandardCost: number;
@@ -47,7 +47,7 @@ export interface Employee {
   LastName: string;
   DepartmentID: number;
   JobTitleID: number;
-  JobTitle: string; // Helper for UI
+  JobTitle: string;
   HireDate: string;
   EmploymentType: string;
   EmploymentStatus: string;
@@ -67,8 +67,8 @@ export interface Promotion {
 }
 
 export interface DimDate {
-  DateKey: number; // e.g. 20240115
-  FullDate: string; // ISO Date String
+  DateKey: number;
+  FullDate: string;
   DayNumber: number;
   MonthNumber: number;
   MonthName: string;
@@ -81,28 +81,27 @@ export interface FactSales {
   SalesOrderID: number;
   OrderNumber: string;
   CustomerID: number;
-  OrderDate: string; // YYYY-MM-DD
-  SalesRepID: number; // Employee ID
+  OrderDate: string;
+  SalesRepID: number;
   OrderType: 'Online' | 'In-Store' | 'Wholesale-Contract';
   OrderStatus: 'Completed' | 'Shipped' | 'Processing' | 'Cancelled';
   PaymentStatus: 'Paid' | 'Pending' | 'Refunded';
   ProductID: number;
   Quantity: number;
   UnitPrice: number;
-  DiscountPercent: number; // e.g., 0.15 for 15%
+  DiscountPercent: number;
   DiscountAmount: number;
-  TaxPercent: number; // e.g., 0.08 for 8%
+  TaxPercent: number;
   TaxAmount: number;
-  LineTotal: number; // Gross total after discount, including tax: (Quantity * UnitPrice - DiscountAmount) * (1 + TaxPercent)
+  LineTotal: number;
   PromotionID: number;
   DeliveryStatus: 'Delivered' | 'In Transit' | 'Pending' | 'Returned';
-  Currency: string; // e.g. USD
+  Currency: string;
   DueDate: string;
   DateKey: number;
   BrandID: number;
 }
 
-// Full hydrated sales item for easy charting without repeated manual joins
 export interface HydratedSalesRecord extends FactSales {
   Customer: Customer;
   Employee: Employee;
@@ -115,6 +114,7 @@ export interface HydratedSalesRecord extends FactSales {
 export interface DashboardFilters {
   year: number | 'All';
   quarter: number | 'All';
+  month: number | 'All';
   brand: number | 'All';
   status: string | 'All';
 }
@@ -131,7 +131,6 @@ export interface SalesCubeDataset {
 
 // ============================================================
 // OLAP API Response Types (server → client via fetch)
-// These represent the JSON shapes returned by /api/* routes.
 // ============================================================
 
 /** Response from GET /api/kpis */
@@ -141,6 +140,27 @@ export interface OlapKpiResponse {
   totalTax: number;
   totalDiscount: number;
   _raw?: Record<string, unknown>;
+}
+
+/** Response from GET /api/kpis-advanced */
+export interface OlapAdvancedKpiResponse {
+  ytdRevenue: number;
+  qtdRevenue: number;
+  mtdRevenue: number;
+  previousYearRevenue: number;
+  previousQuarterRevenue: number;
+  revenueGrowthPct: number;
+  totalOrders: number;
+  avgOrderValue: number;
+  netRevenue: number;
+  estimatedProfit: number;
+  profitMarginPct: number;
+  discountImpact: number;
+  taxAmount: number;
+  currentYear: number;
+  currentQuarter: number;
+  currentMonth: number;
+  dataSource: 'live' | 'static';
 }
 
 /** Response item from GET /api/sales-by-product */
@@ -153,6 +173,8 @@ export interface OlapProductSale {
 export interface OlapDateSale {
   period: string;
   lineTotal: number;
+  volume?: number;
+  profit?: number;
 }
 
 /** Response item from GET /api/sales-by-customer */
@@ -167,6 +189,7 @@ export interface OlapEmployeeSale {
   lineTotal: number;
   quantity: number;
   orderLines: number;
+  profit: number;
 }
 
 /** Response item from GET /api/sales-by-promotion */
@@ -185,10 +208,124 @@ export interface OlapBrandSale {
   quantity: number;
 }
 
+/** Response item from GET /api/sales-by-geography */
+export interface OlapGeographySale {
+  country: string;
+  city?: string;
+  lineTotal: number;
+  quantity: number;
+  orderCount: number;
+}
+
+/** Response from GET /api/customers-analysis */
+export interface OlapCustomerAnalysis {
+  topCustomers: {
+    customer: string;
+    customerType: string;
+    country: string;
+    lineTotal: number;
+    orderCount: number;
+    avgOrderValue: number;
+  }[];
+  bySegment: {
+    segment: string;
+    lineTotal: number;
+    orderCount: number;
+    customerCount: number;
+  }[];
+  dataSource: 'live' | 'static';
+}
+
+/** Single data point for forecasting */
+export interface ForecastPoint {
+  period: string;
+  actual: number | null;
+  forecast: number | null;
+  movingAvg: number | null;
+  isForecasted: boolean;
+}
+
+/** Response from GET /api/forecasting */
+export interface OlapForecastResponse {
+  data: ForecastPoint[];
+  nextMonthForecast: number;
+  nextQuarterForecast: number;
+  method: string;
+  confidence: number;
+  rSquared: number;
+  dataSource: 'live' | 'static';
+}
+
+/** Response from GET /api/data-quality */
+export interface DataQualityResponse {
+  totalRows: number;
+  nullLineTotals: number;
+  nullCustomers: number;
+  nullEmployees: number;
+  lastOrderDate: string | null;
+  lastRefreshDate: string | null;
+  cubeLinkedServerExists: boolean;
+  cubeStatus: 'connected' | 'disconnected' | 'unknown';
+  dimensionCounts: {
+    brands: number;
+    products: number;
+    customers: number;
+    employees: number;
+    promotions: number;
+    dates: number;
+  };
+  etlIndicators: {
+    totalFactRows: number;
+    estimatedLoadTime: string;
+    dataFreshnessDays: number;
+    status: 'fresh' | 'stale' | 'unknown';
+  };
+}
+
 /** Generic async data state wrapper used by all useOlap* hooks */
 export interface OlapDataState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
+  refetch?: () => void;
 }
 
+// ============================================================
+// Auth / Role Types
+// ============================================================
+
+export type UserRole = 'admin' | 'executive' | 'sales_manager' | 'sales_rep';
+
+export interface RolePermissions {
+  tabs: string[];
+  label: string;
+  description: string;
+  color: string;
+}
+
+export const ROLE_CONFIG: Record<UserRole, RolePermissions> = {
+  admin: {
+    tabs: ['executive', 'sales', 'leaderboard', 'promotions', 'forecasting', 'geographic', 'customers', 'quality'],
+    label: 'Administrator',
+    description: 'Full access to all dashboard modules',
+    color: 'text-red-500',
+  },
+  executive: {
+    tabs: ['executive', 'forecasting', 'geographic', 'customers'],
+    label: 'Executive',
+    description: 'Executive KPIs, forecasting, and global analytics',
+    color: 'text-indigo-500',
+  },
+  sales_manager: {
+    tabs: ['executive', 'sales', 'leaderboard', 'promotions', 'customers'],
+    label: 'Sales Manager',
+    description: 'Sales performance, rep rankings, and customer data',
+    color: 'text-emerald-500',
+  },
+  sales_rep: {
+    tabs: ['leaderboard', 'sales'],
+    label: 'Sales Representative',
+    description: 'Personal performance and sales data',
+    color: 'text-amber-500',
+  },
+};

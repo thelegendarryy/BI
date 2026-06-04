@@ -21,7 +21,8 @@ export async function GET() {
       e.FirstName + ' ' + e.LastName AS employee,
       SUM(CAST(oq."[Measures].[Line Total]" AS DECIMAL(18,2))) AS lineTotal,
       SUM(CAST(oq."[Measures].[Quantity]" AS INT)) AS quantity,
-      SUM(CAST(oq."[Measures].[Fact Sales Nombre]" AS INT)) AS orderLines
+      SUM(CAST(oq."[Measures].[Fact Sales Nombre]" AS INT)) AS orderLines,
+      COALESCE(pft.profit, 0) AS profit
     FROM OPENQUERY(SSAS_CUBE, '
       SELECT
         {
@@ -34,7 +35,16 @@ export async function GET() {
       FROM [${CUBE}]
     ') oq
     JOIN Employees e ON CAST(e.EmployeeID AS VARCHAR(50)) = CAST(oq."[Employees].[Employee ID].[Employee ID].[MEMBER_CAPTION]" AS VARCHAR(50))
-    GROUP BY e.FirstName, e.LastName
+    LEFT JOIN (
+      SELECT 
+        SalesRepID,
+        SUM(fs.LineTotal - fs.TaxAmount - (fs.Quantity * p.StandardCost)) AS profit
+      FROM FactSales fs
+      JOIN Products p ON fs.ProductID = p.ProductID
+      WHERE fs.OrderStatus != 'Cancelled'
+      GROUP BY SalesRepID
+    ) pft ON pft.SalesRepID = e.EmployeeID
+    GROUP BY e.FirstName, e.LastName, pft.profit
     ORDER BY lineTotal DESC
   `;
 
@@ -48,7 +58,8 @@ export async function GET() {
       employee: String(row.employee),
       lineTotal: Number(row.lineTotal),
       quantity: Number(row.quantity),
-      orderLines: Number(row.orderLines)
+      orderLines: Number(row.orderLines),
+      profit: Number(row.profit)
     }));
 
     return NextResponse.json(data);

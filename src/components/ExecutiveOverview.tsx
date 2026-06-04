@@ -19,6 +19,8 @@ import {
   OlapErrorBanner,
   DataSourceBadge,
 } from './LoadingSkeleton';
+import AdvancedKPISection from './AdvancedKPISection';
+import TimeIntelligence from './TimeIntelligence';
 import { 
   DollarSign, 
   ShoppingBag, 
@@ -41,20 +43,52 @@ import {
 
 export const ExecutiveOverview: React.FC = () => {
   // Static fallback data from DashboardContext
-  const { kpis: staticKpis, kpiTrends, timeSeriesData: staticTimeSeriesData, filters, theme } = useDashboard();
+  const { kpis: staticKpis, kpiTrends, timeSeriesData: staticTimeSeriesData, filters, theme, demoMode, setDemoMode } = useDashboard();
 
   // Live OLAP data hooks
-  const { data: olapKpis, loading: kpisLoading, error: kpisError } = useKpis();
+  const { data: olapKpis, loading: kpisLoading, error: kpisError } = useKpis(filters);
   const { data: olapTimeSeries, loading: tsLoading, error: tsError } = useSalesByDate(
-    filters.year !== 'All' ? 'month' : 'year'
+    filters.year !== 'All' ? 'month' : 'year',
+    filters
   );
 
   const [chartMetric, setChartMetric] = useState<'financial' | 'volume'>('financial');
   const isDark = theme === 'dark';
 
   // --- Determine whether OLAP data is live or falling back ---
-  const kpisLive = !kpisLoading && !kpisError && olapKpis !== null;
-  const tsLive = !tsLoading && !tsError && olapTimeSeries !== null;
+  const kpisLive = !demoMode && !kpisLoading && !kpisError && olapKpis !== null;
+  const tsLive = !demoMode && !tsLoading && !tsError && olapTimeSeries !== null;
+
+  // If connection failed and NOT in demo mode, block silent fallback and prompt user to enable demo mode
+  if ((kpisError || tsError) && !demoMode) {
+    return (
+      <div className="space-y-6">
+        <TimeIntelligence />
+        <OlapErrorBanner 
+          message={kpisError || tsError || "Database connection error"} 
+          endpoint={kpisError ? "/api/kpis" : "/api/sales-by-date"}
+        />
+        <div className="bg-card border border-border rounded-2xl p-8 shadow-sm text-center max-w-xl mx-auto space-y-4 my-8">
+          <div className="w-16 h-16 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center mx-auto">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-bold text-foreground">Database Connection Offline</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            The SalesCube BI system could not establish a connection to SQL Server or the SSAS linked server. 
+            To proceed with evaluating the presentation dashboard using local pre-seeded snapshot data, click below to enable Demo Mode.
+          </p>
+          <button
+            onClick={() => setDemoMode(true)}
+            className="inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-colors shadow-sm select-none active:scale-95 cursor-pointer"
+          >
+            Enable Presentation Demo Mode
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // --- KPI values: prefer OLAP, fallback to static ---
   const displayKpis = {
@@ -69,8 +103,8 @@ export const ExecutiveOverview: React.FC = () => {
   const olapChartData = olapTimeSeries?.map((d) => ({
     name: d.period,
     revenue: Math.round(d.lineTotal),
-    profit: Math.round(d.lineTotal * 0.35), // approximation (SSAS doesn't return cost)
-    volume: 0, // volume not in date endpoint — would need a separate query
+    profit: Math.round(d.profit ?? (d.lineTotal * 0.35)),
+    volume: d.volume ?? 0,
   })) ?? [];
 
   const chartData = tsLive ? olapChartData : staticTimeSeriesData;
@@ -132,7 +166,10 @@ export const ExecutiveOverview: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* ── Time Intelligence Row ── */}
+      <TimeIntelligence />
+
       {/* OLAP Error Banners (shown only if API failed) */}
       {kpisError && (
         <OlapErrorBanner
@@ -249,6 +286,9 @@ export const ExecutiveOverview: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* ── Advanced KPI Section ── */}
+      <AdvancedKPISection />
 
       {/* Time Series Charts Card */}
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
@@ -376,9 +416,17 @@ export const ExecutiveOverview: React.FC = () => {
         <div className="flex items-center gap-2 p-3 bg-secondary/30 rounded-xl border border-border/30 text-xs text-muted-foreground mt-2">
           <Info className="w-4 h-4 text-primary shrink-0" />
           <span>
-            Revenue sourced from <b>[Measures].[Line Total]</b> via MDX OPENQUERY on the{' '}
-            <b>Entreprise DW</b> SSAS cube. Net Profit is estimated as 35% of Line Total (cost
-            data not available in the current MDX slice).
+            {tsLive && olapTimeSeries?.[0]?.profit !== undefined && olapTimeSeries?.[0]?.profit > 0 ? (
+              <span>
+                Revenue, Profit, and Quantity sourced dynamically from the database. Net Profit is calculated as <b>LineTotal - TaxAmount - (Quantity * StandardCost)</b>.
+              </span>
+            ) : (
+              <span>
+                Revenue sourced from <b>[Measures].[Line Total]</b> via MDX OPENQUERY on the{' '}
+                <b>Entreprise DW</b> SSAS cube. Net Profit is estimated as 35% of Line Total (cost
+                data not available in the current MDX slice).
+              </span>
+            )}
           </span>
         </div>
       </div>

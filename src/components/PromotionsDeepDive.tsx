@@ -4,14 +4,14 @@
  * PromotionsDeepDive.tsx — Promotion Elasticity & Margin Deep-Dive view
  *
  * Data source:
- * - Promotions bar chart: /api/sales-by-promotion (OLAP) → fallback to static promotionsData
- * - Discount sensitivity chart: static only (requires pre-computed discount buckets)
+ * - Promotions bar chart: /api/sales-by-promotion (OLAP)
+ * - Discount sensitivity chart: /api/sales-by-discount-rate (DW query with filters)
  */
 
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { useDashboard } from '../context/DashboardContext';
-import { useSalesByPromotion } from '../hooks/useOlapData';
-import { ChartSkeleton, OlapErrorBanner, DataSourceBadge } from './LoadingSkeleton';
+import { useSalesByPromotion, useSalesByDiscountRate } from '../hooks/useOlapData';
+import { ChartSkeleton, OlapErrorBanner, DataSourceBadge, EmptyState } from './LoadingSkeleton';
 import { 
   BarChart, 
   Bar, 
@@ -24,15 +24,21 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { Percent, Sparkles, TrendingUp, Info } from 'lucide-react';
+import { Percent, Sparkles, TrendingUp, Info, HelpCircle } from 'lucide-react';
 
 export const PromotionsDeepDive: React.FC = () => {
-  // Static fallback data
-  const { promotionsData, discountDeepDive, theme } = useDashboard();
+  const { promotionsData, discountDeepDive, filters, theme, demoMode, setDemoMode } = useDashboard();
 
-  // Live OLAP data
-  const { data: olapPromotions, loading, error } = useSalesByPromotion();
-  const isLive = !loading && !error && olapPromotions !== null;
+  // Live OLAP data hooks (with filter parameters)
+  const { data: olapPromotions, loading: promoLoading, error: promoError } = useSalesByPromotion(filters);
+  const { data: olapDiscountRes, loading: discountLoading, error: discountError } = useSalesByDiscountRate(filters);
+
+  const olapDiscount = olapDiscountRes?.data ?? null;
+  const olapDiscountSource = olapDiscountRes?.dataSource ?? 'static';
+
+  // Determine availability
+  const isPromoLive = !demoMode && !promoLoading && !promoError && olapPromotions !== null;
+  const isDiscountLive = !demoMode && !discountLoading && !discountError && olapDiscount !== null;
 
   const isDark = theme === 'dark';
   const chartTheme = {
@@ -53,14 +59,38 @@ export const PromotionsDeepDive: React.FC = () => {
   const formatNumber = (value: number) => new Intl.NumberFormat('en-US').format(value);
 
   // Transform OLAP data to chart format
-  const olapChartData = olapPromotions?.map((p) => ({
-    name: p.promotionType,
-    revenue: Math.round(p.lineTotal),
-    volume: p.quantity,
-    avgDiscountPercent: p.avgDiscountPercent,
-  })) ?? [];
+  const olapChartData = useMemo(() => {
+    return olapPromotions?.map((p) => ({
+      name: p.promotionType === 'Unknown' || p.promotionType === null ? 'Standard Sales (No Promotion)' : p.promotionType,
+      revenue: Math.round(p.lineTotal),
+      volume: p.quantity,
+      avgDiscountPercent: p.avgDiscountPercent,
+    })) ?? [];
+  }, [olapPromotions]);
 
-  const promoChartData = isLive ? olapChartData : promotionsData;
+  // If in demo mode, use mock promotionsData. Otherwise, if live is available, use it. Else empty.
+  const promoChartData = useMemo(() => {
+    if (demoMode) return promotionsData;
+    return isPromoLive ? olapChartData : [];
+  }, [demoMode, isPromoLive, olapChartData, promotionsData]);
+
+  // Determine if promotions data is actually empty (meaning no promotional campaigns exist in the live DB)
+  const isPromoEmpty = useMemo(() => {
+    if (demoMode) return false;
+    if (promoLoading || promoError) return false;
+    // Empty if no data, or if the only entry is standard sales (no actual campaigns run)
+    return (
+      promoChartData.length === 0 ||
+      (promoChartData.length === 1 && 
+        (promoChartData[0].name.includes('No Promotion') || promoChartData[0].name.includes('Standard Sales')))
+    );
+  }, [demoMode, promoLoading, promoError, promoChartData]);
+
+  // Transform discount elasticity data
+  const discountChartData = useMemo(() => {
+    if (demoMode) return discountDeepDive;
+    return isDiscountLive ? (olapDiscount || []) : [];
+  }, [demoMode, isDiscountLive, olapDiscount, discountDeepDive]);
 
   // Custom tooltip for promotion comparison
   const PromoTooltip = ({ active, payload, label }: any) => {
@@ -114,7 +144,7 @@ export const PromotionsDeepDive: React.FC = () => {
           )}
           <div className="flex justify-between gap-4 items-center border-t border-border/40 pt-1 mt-1 text-[10px] text-muted-foreground">
             <span>Avg Order Quantity:</span>
-            <span className="font-medium text-foreground">{payload[0].payload.avgOrderQuantity} / order</span>
+            <span className="font-medium text-foreground">{payload[0].payload.avgOrderQuantity || 0} / order</span>
           </div>
         </div>
       );
@@ -122,10 +152,83 @@ export const PromotionsDeepDive: React.FC = () => {
     return null;
   };
 
+  // Dynamic Insight Generation
+  const promoInsight = useMemo(() => {
+    if (demoMode) {
+      return "The data demonstrates standard retail price elasticity. Zero discount sales generate the highest average gross profit margin (~53%), but limit transaction velocity. Transitioning to higher discount brackets (e.g. 10% to 15%) drives significantly larger volume sales, yet the profit margins decay steadily. Black Friday (20% discount) results in the highest volume spikes, but represents the lowest profit margin point (~34%), illustrating the inflection trade-off between volume scale and net returns.";
+    }
+    if (isPromoEmpty) {
+      return "No promotion campaigns are active in the current data warehouse load. 100% of generated revenue is categorized as Standard Sales (No Promotion). To view how promotional campaign impact is visualized, enable Presentation Demo Mode in the header.";
+    }
+    if (!isPromoLive || promoChartData.length === 0) {
+      return "OLAP query is currently unavailable. Ensure the database connection is running to view live campaign performance insights.";
+    }
+
+    // Sort by revenue
+    const nonStd = promoChartData.filter(d => !d.name.includes('Standard') && !d.name.includes('No Promotion'));
+    if (nonStd.length === 0) {
+      return "Standard retail sales represent the total transaction volume. No separate promotional campaign segments were registered in the filtered dataset.";
+    }
+    const topPromo = [...nonStd].sort((a, b) => b.revenue - a.revenue)[0];
+    return `Based on live SSAS data, the campaign "${topPromo.name}" is the top performer, generating ${formatCurrency(topPromo.revenue)} in revenue across ${formatNumber(topPromo.volume)} units sold at an average discount of ${topPromo.avgDiscountPercent}%. This indicates targeted promotions successfully drive the largest order quantities.`;
+  }, [demoMode, isPromoEmpty, isPromoLive, promoChartData]);
+
+  const elasticityInsight = useMemo(() => {
+    if (demoMode) {
+      return "Price elasticity analysis suggests that volume is highly responsive to discount rates. A 10% discount creates a 40% volume lift with moderate margin compression, representing the optimal promotion strategy for gross margin dollar maximization.";
+    }
+    if (!isDiscountLive || discountChartData.length === 0) {
+      return "Discount sensitivity analysis is unavailable because live warehouse records could not be retrieved.";
+    }
+
+    const nonZeroDiscounts = discountChartData.filter(d => d.discount > 0);
+    if (nonZeroDiscounts.length === 0) {
+      return "All live transactions are recorded at 0% standard pricing. Elasticity mapping cannot be computed because no variable discount rates exist in the selected data segment.";
+    }
+
+    // Sort by volume to find maximum velocity
+    const maxVolumePoint = [...discountChartData].sort((a, b) => b.volume - a.volume)[0];
+    // Find maximum margin
+    const maxMarginPoint = [...discountChartData].sort((a, b) => b.marginPercent - a.marginPercent)[0];
+
+    return `Based on live transaction records, the discount rate of ${maxVolumePoint.name} yields the highest volume of ${formatNumber(maxVolumePoint.volume)} units, while the ${maxMarginPoint.name} discount rate maintains the healthiest average profit margin of ${maxMarginPoint.marginPercent}%. This proves standard retail price elasticity where profit margins compress systematically as discount rates increase.`;
+  }, [demoMode, isDiscountLive, discountChartData]);
+
   return (
     <div className="space-y-6">
-      {/* Error banner */}
-      {error && <OlapErrorBanner message={error} endpoint="/api/sales-by-promotion" />}
+      {/* Presentation Demo Mode Header Toggle */}
+      <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-amber-500/10 text-amber-500 rounded-xl">
+            <HelpCircle className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-foreground">Presentation Demo Mode</h4>
+            <p className="text-[10px] text-muted-foreground">
+              {demoMode 
+                ? 'Displaying static mock dataset for supervisor and academic defense demonstration.' 
+                : 'Displaying live SQL and SSAS relational measurements. Toggle to preview demo data if live tables are empty.'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => setDemoMode(!demoMode)}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+            demoMode ? 'bg-amber-500' : 'bg-secondary'
+          }`}
+        >
+          <span
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+              demoMode ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* Error banner - only shown when NOT in demo mode */}
+      {!demoMode && promoError && (
+        <OlapErrorBanner message={promoError} endpoint="/api/sales-by-promotion" />
+      )}
 
       {/* Promotion Slices Overview */}
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
@@ -137,21 +240,31 @@ export const PromotionsDeepDive: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-foreground">Promotion Campaigns Performance</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {isLive
-                  ? 'Live MDX: [Promotions].[Promotion Type] × [Measures].[Line Total, Discount Amount]'
-                  : 'Revenue and volume by promotion type — static fallback data.'}
+                {demoMode 
+                  ? 'Revenue and volume by promotion type — static demonstration data.'
+                  : 'Live MDX: [Promotions].[Promotion Type] × [Measures].[Line Total, Quantity]'}
               </p>
             </div>
           </div>
-          <DataSourceBadge isLive={isLive} loading={loading} />
+          <DataSourceBadge 
+            source={demoMode ? 'demo' : (isPromoLive ? 'ssas' : 'static')} 
+            loading={!demoMode && promoLoading} 
+          />
         </div>
 
-        <div className="h-[280px] w-full text-foreground select-none">
-          {loading ? (
+        <div className="h-[280px] w-full text-foreground select-none flex flex-col justify-center">
+          {promoLoading && !demoMode ? (
             <ChartSkeleton height={280} />
-          ) : promoChartData.length === 0 ? (
+          ) : isPromoEmpty ? (
+            <div className="border border-dashed border-border/60 rounded-xl bg-secondary/10 py-6">
+              <EmptyState 
+                title="No Campaign Records Available" 
+                message="All 7,306 sales records in the current warehouse load have NULL PromotionID. Enable Presentation Demo Mode above to preview campaign visuals."
+              />
+            </div>
+          ) : promoChartData.length === 0 && !demoMode ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-              No promotion data available.
+              Failed to load live data. Click "Presentation Demo Mode" to view mock visualization.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -181,7 +294,11 @@ export const PromotionsDeepDive: React.FC = () => {
         </div>
       </div>
 
-      {/* Discount Rate Sensitivity Analysis — static only */}
+      {/* Discount Rate Sensitivity Analysis */}
+      {!demoMode && discountError && (
+        <OlapErrorBanner message={discountError} endpoint="/api/sales-by-discount-rate" />
+      )}
+
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="flex items-center gap-3">
@@ -191,22 +308,28 @@ export const PromotionsDeepDive: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-foreground">Discount Rate Elasticity & Profit Sensitivity</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Dual-axis mapping: discount % vs aggregate transaction volume vs profit margins.
+                {demoMode 
+                  ? 'Dual-axis mapping: discount % vs aggregate transaction volume vs profit margins (demo).'
+                  : 'Live SQL: FactSales Joined with Products to compute margins per discount rate.'}
               </p>
             </div>
           </div>
-          {/* This chart uses computed static data — MDX cannot easily compute discount buckets */}
-          <DataSourceBadge isLive={false} />
+          <DataSourceBadge 
+            source={demoMode ? 'demo' : (isDiscountLive ? (olapDiscountSource === 'live' ? 'sql' : 'static') : 'static')} 
+            loading={!demoMode && discountLoading} 
+          />
         </div>
 
-        <div className="h-[300px] w-full text-foreground select-none">
-          {discountDeepDive.length === 0 ? (
+        <div className="h-[300px] w-full text-foreground select-none flex flex-col justify-center">
+          {discountLoading && !demoMode ? (
+            <ChartSkeleton height={300} />
+          ) : discountChartData.length === 0 && !demoMode ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-              No data available for the active filters.
+              Failed to load live discount sensitivity data.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={discountDeepDive} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+              <ComposedChart data={discountChartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartTheme.grid} />
                 <XAxis 
                   dataKey="name" 
@@ -268,21 +391,33 @@ export const PromotionsDeepDive: React.FC = () => {
         </div>
 
         {/* Insight Box */}
-        <div className="p-4 bg-primary/[0.02] border border-primary/10 rounded-2xl space-y-2 mt-4">
-          <h4 className="text-xs font-bold text-primary flex items-center gap-1.5">
-            <TrendingUp className="w-3.5 h-3.5" />
-            Executive OLAP Elasticity Insight
-          </h4>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
-            The data demonstrates standard retail price elasticity. Zero discount sales generate the highest 
-            average gross profit margin (~53%), but limit transaction velocity. Transitioning to higher discount 
-            brackets (e.g. 10% to 15%) drives significantly larger volume sales, yet the profit margins decay 
-            steadily. Black Friday (20% discount) results in the highest volume spikes, but represents the lowest 
-            profit margin point (~34%), illustrating the inflection trade-off between volume scale and net returns.
-          </p>
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70 pt-1">
-            <Info className="w-3 h-3" />
-            <span>Sensitivity chart uses pre-computed discount buckets from local dataset.</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-2 border-t border-border/40">
+          <div className="p-4 bg-primary/[0.02] border border-primary/10 rounded-2xl space-y-2">
+            <h4 className="text-xs font-bold text-primary flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5" />
+              Campaign Performance Insight
+            </h4>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {promoInsight}
+            </p>
+          </div>
+
+          <div className="p-4 bg-amber-500/[0.02] border border-amber-500/10 rounded-2xl space-y-2">
+            <h4 className="text-xs font-bold text-amber-500 flex items-center gap-1.5">
+              <Percent className="w-3.5 h-3.5" />
+              Elasticity & Margin Sensitivity Insight
+            </h4>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {elasticityInsight}
+            </p>
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70 pt-1">
+              <Info className="w-3 h-3" />
+              <span>
+                {demoMode 
+                  ? 'Sensitivity chart uses pre-computed discount buckets from local dataset.' 
+                  : `Discount data computed dynamically via ${olapDiscountSource === 'live' ? 'live SQL database' : 'local dataset'}.`}
+              </span>
+            </div>
           </div>
         </div>
       </div>

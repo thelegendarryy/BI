@@ -1,18 +1,3 @@
-'use client';
-
-/**
- * useOlapData.ts — Client-side React hooks for fetching OLAP API data
- *
- * Rules:
- * - These hooks ONLY call Next.js API routes (/api/*). They never talk
- *   directly to SQL Server or SSAS — that happens exclusively on the server.
- * - Each hook follows the same pattern: { data, loading, error } state.
- * - Credentials are never exposed — they stay in .env.local on the server.
- *
- * Usage example:
- *   const { data: kpis, loading, error } = useKpis();
- */
-
 import { useState, useEffect } from 'react';
 import type {
   OlapKpiResponse,
@@ -23,7 +8,23 @@ import type {
   OlapPromotionSale,
   OlapBrandSale,
   OlapDataState,
+  DashboardFilters,
+  OlapGeographySale,
+  OlapCustomerAnalysis
 } from '../types/dashboard';
+
+// Helper to construct query string from dashboard filters
+function buildQueryString(filters?: DashboardFilters): string {
+  if (!filters) return '';
+  const params = new URLSearchParams();
+  if (filters.year && filters.year !== 'All') params.append('year', String(filters.year));
+  if (filters.quarter && filters.quarter !== 'All') params.append('quarter', String(filters.quarter));
+  if (filters.month && filters.month !== 'All') params.append('month', String(filters.month));
+  if (filters.brand && filters.brand !== 'All') params.append('brand', String(filters.brand));
+  if (filters.status && filters.status !== 'All') params.append('status', filters.status);
+  const str = params.toString();
+  return str ? `?${str}` : '';
+}
 
 // ---------------------------------------------------------------------------
 // Generic fetcher factory — creates a hook for any API endpoint
@@ -41,10 +42,7 @@ function useOlapFetch<T>(endpoint: string): OlapDataState<T> {
       setError(null);
 
       try {
-        const res = await fetch(endpoint, {
-          // Cache for 60 seconds before re-fetching (adjust as needed)
-          next: { revalidate: 60 },
-        } as RequestInit);
+        const res = await fetch(endpoint);
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -72,7 +70,6 @@ function useOlapFetch<T>(endpoint: string): OlapDataState<T> {
 
     fetchData();
 
-    // Cleanup: ignore response if component unmounts before fetch completes
     return () => {
       cancelled = true;
     };
@@ -87,74 +84,91 @@ function useOlapFetch<T>(endpoint: string): OlapDataState<T> {
 
 /**
  * useKpis — fetches aggregate KPIs from /api/kpis
- *
- * Returns: { totalSales, totalQuantity, totalTax, totalDiscount }
- * Powers: KPI cards in ExecutiveOverview
  */
-export function useKpis(): OlapDataState<OlapKpiResponse> {
-  return useOlapFetch<OlapKpiResponse>('/api/kpis');
+export function useKpis(filters?: DashboardFilters): OlapDataState<OlapKpiResponse & { dataSource?: string }> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapKpiResponse & { dataSource?: string }>(`/api/kpis${query}`);
 }
 
 /**
  * useSalesByProduct — fetches product-level revenue from /api/sales-by-product
- *
- * Returns: [{ name, lineTotal }]
- * Powers: Product bar chart in SalesPerformance
  */
-export function useSalesByProduct(): OlapDataState<OlapProductSale[]> {
-  return useOlapFetch<OlapProductSale[]>('/api/sales-by-product');
+export function useSalesByProduct(filters?: DashboardFilters): OlapDataState<OlapProductSale[]> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapProductSale[]>(`/api/sales-by-product${query}`);
 }
 
 /**
  * useSalesByDate — fetches time-series sales from /api/sales-by-date
- *
- * Returns: [{ period, lineTotal }]
- * Powers: Sales trend area chart in ExecutiveOverview
- *
- * @param granularity 'year' | 'quarter' | 'month' (default 'year')
  */
 export function useSalesByDate(
-  granularity: 'year' | 'quarter' | 'month' = 'year'
+  granularity: 'year' | 'quarter' | 'month' = 'year',
+  filters?: DashboardFilters
 ): OlapDataState<OlapDateSale[]> {
-  return useOlapFetch<OlapDateSale[]>(`/api/sales-by-date?granularity=${granularity}`);
+  const query = buildQueryString(filters);
+  const sep = query ? '&' : '?';
+  return useOlapFetch<OlapDateSale[]>(`/api/sales-by-date${query}${sep}granularity=${granularity}`);
 }
 
 /**
  * useSalesByCustomer — fetches top-20 customers from /api/sales-by-customer
- *
- * Returns: [{ customer, lineTotal }]
- * Powers: Customer breakdown panel
  */
-export function useSalesByCustomer(): OlapDataState<OlapCustomerSale[]> {
-  return useOlapFetch<OlapCustomerSale[]>('/api/sales-by-customer');
+export function useSalesByCustomer(filters?: DashboardFilters): OlapDataState<OlapCustomerSale[]> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapCustomerSale[]>(`/api/sales-by-customer${query}`);
 }
 
 /**
  * useSalesByEmployee — fetches employee leaderboard from /api/sales-by-employee
- *
- * Returns: [{ employee, lineTotal, quantity, orderLines }]
- * Powers: EmployeeLeaderboard component
  */
-export function useSalesByEmployee(): OlapDataState<OlapEmployeeSale[]> {
-  return useOlapFetch<OlapEmployeeSale[]>('/api/sales-by-employee');
+export function useSalesByEmployee(filters?: DashboardFilters): OlapDataState<OlapEmployeeSale[]> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapEmployeeSale[]>(`/api/sales-by-employee${query}`);
 }
 
 /**
  * useSalesByPromotion — fetches promotion slices from /api/sales-by-promotion
- *
- * Returns: [{ promotionType, lineTotal, discountAmount, quantity, avgDiscountPercent }]
- * Powers: PromotionsDeepDive component
  */
-export function useSalesByPromotion(): OlapDataState<OlapPromotionSale[]> {
-  return useOlapFetch<OlapPromotionSale[]>('/api/sales-by-promotion');
+export function useSalesByPromotion(filters?: DashboardFilters): OlapDataState<OlapPromotionSale[]> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapPromotionSale[]>(`/api/sales-by-promotion${query}`);
 }
 
 /**
  * useSalesByBrand — fetches brand revenue from /api/sales-by-brand
- *
- * Returns: [{ brand, lineTotal, quantity }]
- * Powers: Brand bar chart in SalesPerformance
  */
-export function useSalesByBrand(): OlapDataState<OlapBrandSale[]> {
-  return useOlapFetch<OlapBrandSale[]>('/api/sales-by-brand');
+export function useSalesByBrand(filters?: DashboardFilters): OlapDataState<OlapBrandSale[]> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapBrandSale[]>(`/api/sales-by-brand${query}`);
 }
+
+/**
+ * useSalesByGeography — fetches geography data from /api/sales-by-geography
+ */
+export function useSalesByGeography(
+  groupBy: 'country' | 'city' = 'country',
+  filters?: DashboardFilters
+): OlapDataState<{ data: OlapGeographySale[]; dataSource: 'live' | 'static'; groupBy: string }> {
+  const query = buildQueryString(filters);
+  const sep = query ? '&' : '?';
+  return useOlapFetch<{ data: OlapGeographySale[]; dataSource: 'live' | 'static'; groupBy: string }>(
+    `/api/sales-by-geography${query}${sep}groupBy=${groupBy}`
+  );
+}
+
+/**
+ * useSalesByDiscountRate — fetches discount rate price elasticity data
+ */
+export function useSalesByDiscountRate(filters?: DashboardFilters): OlapDataState<{ data: any[]; dataSource: 'live' | 'static' }> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<{ data: any[]; dataSource: 'live' | 'static' }>(`/api/sales-by-discount-rate${query}`);
+}
+
+/**
+ * useCustomersAnalysis — fetches customers segments and top customer stats
+ */
+export function useCustomersAnalysis(filters?: DashboardFilters): OlapDataState<OlapCustomerAnalysis> {
+  const query = buildQueryString(filters);
+  return useOlapFetch<OlapCustomerAnalysis>(`/api/customers-analysis${query}`);
+}
+

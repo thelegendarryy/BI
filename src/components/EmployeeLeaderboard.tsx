@@ -8,10 +8,11 @@
  * - Fallback: static repLeaderboard from DashboardContext
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useDashboard } from '../context/DashboardContext';
 import { useSalesByEmployee } from '../hooks/useOlapData';
-import { ChartSkeleton, TableSkeleton, OlapErrorBanner, DataSourceBadge } from './LoadingSkeleton';
+import { ChartSkeleton, TableSkeleton, OlapErrorBanner, DataSourceBadge, EmptyState } from './LoadingSkeleton';
+import { exportToCSV } from '../lib/export';
 import { 
   BarChart, 
   Bar, 
@@ -22,15 +23,42 @@ import {
   ResponsiveContainer,
   Legend
 } from 'recharts';
-import { Trophy, Award, Info } from 'lucide-react';
+import { Trophy, Award, Info, TrendingUp } from 'lucide-react';
 
 export const EmployeeLeaderboard: React.FC = () => {
   // Static fallback
-  const { repLeaderboard, theme } = useDashboard();
+  const { repLeaderboard, filters, theme, demoMode, setDemoMode } = useDashboard();
 
-  // Live OLAP
-  const { data: olapEmployees, loading, error } = useSalesByEmployee();
-  const isLive = !loading && !error && olapEmployees !== null;
+  // Live OLAP with dashboard filters
+  const { data: olapEmployees, loading, error } = useSalesByEmployee(filters);
+  const isLive = !demoMode && !loading && !error && olapEmployees !== null;
+
+  // If connection failed and NOT in demo mode, block silent fallback and prompt user to enable demo mode
+  if (error && !demoMode) {
+    return (
+      <div className="space-y-6">
+        <OlapErrorBanner message={error} endpoint="/api/sales-by-employee" />
+        <div className="bg-card border border-border rounded-2xl p-8 shadow-sm text-center max-w-xl mx-auto space-y-4 my-8">
+          <div className="w-16 h-16 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center mx-auto">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-bold text-foreground">Database Connection Offline</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            The SalesCube BI standings could not retrieve representative sales metrics because the database server is offline. 
+            To proceed using local pre-seeded snapshot data, click below to enable Demo Mode.
+          </p>
+          <button
+            onClick={() => setDemoMode(true)}
+            className="inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-colors shadow-sm select-none active:scale-95 cursor-pointer"
+          >
+            Enable Presentation Demo Mode
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const isDark = theme === 'dark';
   const chartTheme = {
@@ -47,24 +75,56 @@ export const EmployeeLeaderboard: React.FC = () => {
       maximumFractionDigits: 0,
     }).format(value);
 
-  // Transform OLAP data to chart-compatible shape
-  const olapChartData = olapEmployees?.map((e) => ({
-    name: e.employee,
-    revenue: Math.round(e.lineTotal),
-    quantity: e.quantity,
-    orderLines: e.orderLines,
-  })) ?? [];
+  // Transform OLAP data to chart-compatible shape, mapping the real profit field
+  const olapChartData = useMemo(() => {
+    return olapEmployees?.map((e) => {
+      const revenue = Math.round(e.lineTotal);
+      const profit = Math.round(e.profit || 0);
+      return {
+        name: e.employee,
+        revenue,
+        quantity: e.quantity,
+        orderLines: e.orderLines,
+        profit,
+        marginPercent: revenue > 0 ? Math.round((profit / revenue) * 100) : 0
+      };
+    }) ?? [];
+  }, [olapEmployees]);
 
   // Static chart data shape
-  const staticChartData = repLeaderboard.map((r) => ({
-    name: r.name,
-    revenue: r.revenue,
-    profit: r.profit,
-    marginPercent: r.marginPercent,
-  }));
+  const staticChartData = useMemo(() => {
+    return repLeaderboard.map((r) => ({
+      name: r.name,
+      revenue: r.revenue,
+      profit: r.profit,
+      marginPercent: r.marginPercent,
+    }));
+  }, [repLeaderboard]);
 
   const chartData: any[] = isLive ? olapChartData : staticChartData;
 
+  // Standings Insights
+  const standingsInsight = useMemo(() => {
+    if (chartData.length === 0) return null;
+    const topRep = chartData[0];
+    const runnerUp = chartData[1];
+    
+    const leadAmount = topRep.revenue - (runnerUp ? runnerUp.revenue : 0);
+    const leadPct = runnerUp && runnerUp.revenue > 0 
+      ? Math.round((leadAmount / runnerUp.revenue) * 100) 
+      : 0;
+
+    const topProfit = topRep.profit || 0;
+    const topMargin = topRep.marginPercent !== undefined 
+      ? topRep.marginPercent 
+      : (topRep.revenue > 0 ? Math.round((topProfit / topRep.revenue) * 100) : 0);
+
+    if (isLive) {
+      return `According to live SSAS/DW records, ${topRep.name} leads the sales standings with ${formatCurrency(topRep.revenue)} in revenue. ${runnerUp ? `${topRep.name} maintains a ${leadPct}% lead over the runner-up, ${runnerUp.name}.` : ''} ${topProfit > 0 ? `Net profitability for ${topRep.name} stands at ${formatCurrency(topProfit)} (average margin of ${topMargin}%), highlighting strong pricing discipline and high-margin product mix.` : ''}`;
+    } else {
+      return `According to the fallback snapshot, ${topRep.name} leads the standings with ${formatCurrency(topRep.revenue)} in revenue, followed by ${runnerUp ? runnerUp.name : 'N/A'}. ${topRep.name} also delivered ${formatCurrency(topProfit)} in net profit (margin of ${topMargin}%).`;
+    }
+  }, [chartData, isLive]);
 
   // Rank badge
   const RankBadge: React.FC<{ rank: number }> = ({ rank }) => {
@@ -81,12 +141,12 @@ export const EmployeeLeaderboard: React.FC = () => {
         <div className="bg-card border border-border p-3.5 rounded-xl shadow-lg text-xs space-y-1.5 min-w-[150px]">
           <p className="font-bold text-foreground border-b border-border/60 pb-1 mb-1">{label}</p>
           <div className="flex justify-between gap-4 items-center">
-            <span className="text-muted-foreground">Revenue:</span>
+            <span className="text-muted-foreground">{payload[0].name}:</span>
             <span className="font-semibold text-primary">{formatCurrency(payload[0].value)}</span>
           </div>
           {payload[1] && (
             <div className="flex justify-between gap-4 items-center">
-              <span className="text-muted-foreground">Profit:</span>
+              <span className="text-muted-foreground">{payload[1].name}:</span>
               <span className="font-semibold text-emerald-500">{formatCurrency(payload[1].value)}</span>
             </div>
           )}
@@ -111,20 +171,35 @@ export const EmployeeLeaderboard: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-foreground">Sales Rep Performance Standings</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Revenue generated per employee — from SSAS Employees dimension.
+                Revenue and profitability per employee — from SSAS/DW Employees dimension.
               </p>
             </div>
           </div>
-          <DataSourceBadge isLive={isLive} loading={loading} />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const liveRows = chartData.map((e, index) => ({
+                  Rank: index + 1,
+                  Employee: e.name,
+                  'Revenue (USD)': e.revenue,
+                  'Profit (USD)': e.profit || 0,
+                  'Margin %': e.marginPercent || 0,
+                }));
+                exportToCSV(liveRows, 'SalesCube_RepLeaderboard');
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+            >
+              📥 Export CSV
+            </button>
+            <DataSourceBadge isLive={isLive} loading={loading} />
+          </div>
         </div>
 
         <div className="h-[280px] w-full text-foreground select-none">
           {loading ? (
             <ChartSkeleton height={280} />
           ) : chartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-              No employee data available.
-            </div>
+            <EmptyState title="No employee data" message="SSAS employee data unavailable. Check linked server or filter settings." />
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
@@ -154,14 +229,24 @@ export const EmployeeLeaderboard: React.FC = () => {
                   wrapperStyle={{ fontSize: '11px', color: chartTheme.text }}
                 />
                 <Bar name="Total Revenue" dataKey="revenue" fill={chartTheme.revenueBar} radius={[4, 4, 0, 0]} barSize={18} />
-                {/* Show profit bar only when static data (which includes profit calc) */}
-                {!isLive && (
-                  <Bar name="Net Profit" dataKey="profit" fill={chartTheme.profitBar} radius={[4, 4, 0, 0]} barSize={18} />
-                )}
+                <Bar name="Net Profit" dataKey="profit" fill={chartTheme.profitBar} radius={[4, 4, 0, 0]} barSize={18} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
+
+        {/* Dynamic Standings Insights Box */}
+        {standingsInsight && (
+          <div className="p-4 bg-primary/[0.02] border border-primary/10 rounded-2xl space-y-2 mt-4">
+            <h4 className="text-xs font-bold text-primary flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-primary" />
+              Dynamic Performance Insights
+            </h4>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {standingsInsight}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Detailed Table Card */}
@@ -175,7 +260,7 @@ export const EmployeeLeaderboard: React.FC = () => {
               <h3 className="text-sm font-bold text-foreground">Detailed Ranking Table</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {isLive
-                  ? 'Live MDX data from [Employees].[Employee Name] × [Measures].[Line Total]'
+                  ? 'Live DW/SSAS data from [Employees].[Employee Name] × measures'
                   : 'Static fallback — comprehensive leaderboard from local dataset.'}
               </p>
             </div>
@@ -185,7 +270,7 @@ export const EmployeeLeaderboard: React.FC = () => {
 
         <div className="overflow-x-auto">
           {loading ? (
-            <TableSkeleton rows={6} cols={isLive ? 4 : 6} />
+            <TableSkeleton rows={6} cols={isLive ? 6 : 7} />
           ) : isLive ? (
             /* OLAP Table — columns available from /api/sales-by-employee */
             <table className="w-full text-left border-collapse text-xs">
@@ -194,30 +279,40 @@ export const EmployeeLeaderboard: React.FC = () => {
                   <th className="py-3 px-5 text-center w-[60px]">Rank</th>
                   <th className="py-3 px-4">Employee</th>
                   <th className="py-3 px-4 text-right">Total Revenue</th>
+                  <th className="py-3 px-4 text-right">Net Profit</th>
                   <th className="py-3 px-4 text-right">Units Sold</th>
-                  <th className="py-3 px-4 text-right">Order Lines</th>
+                  <th className="py-3 px-4 text-right font-medium text-center">Avg Margin %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {olapEmployees!.map((emp, index) => (
+                {olapChartData.map((emp, index) => (
                   <tr 
-                    key={emp.employee}
+                    key={emp.name}
                     className={`hover:bg-secondary/20 transition-colors ${index === 0 ? 'bg-primary/[0.02]' : ''}`}
                   >
                     <td className="py-3.5 px-5 text-center font-bold">
                       <RankBadge rank={index + 1} />
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-foreground">
-                      {emp.employee}
+                      {emp.name}
                     </td>
                     <td className="py-3.5 px-4 text-right text-foreground font-bold">
-                      {formatCurrency(emp.lineTotal)}
+                      {formatCurrency(emp.revenue)}
+                    </td>
+                    <td className="py-3.5 px-4 text-right text-emerald-500 font-bold">
+                      {formatCurrency(emp.profit)}
                     </td>
                     <td className="py-3.5 px-4 text-right text-muted-foreground">
                       {emp.quantity.toLocaleString()}
                     </td>
-                    <td className="py-3.5 px-4 text-right text-muted-foreground">
-                      {emp.orderLines.toLocaleString()}
+                    <td className="py-3.5 px-4 text-center">
+                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
+                        emp.marginPercent > 45 ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' :
+                        emp.marginPercent > 35 ? 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20' :
+                        'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                      }`}>
+                        {emp.marginPercent}%
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -286,7 +381,7 @@ export const EmployeeLeaderboard: React.FC = () => {
           <Info className="w-3.5 h-3.5 text-primary shrink-0" />
           <span>
             {isLive
-              ? 'Live MDX: SELECT [Measures].[Line Total], [Quantity], [Fact Sales Nombre] ON COLUMNS, NON EMPTY ORDER([Employees].[Employee Name].Members, [Measures].[Line Total], BDESC) ON ROWS FROM [Entreprise DW]'
+              ? 'Live SQL: SELECT e.EmployeeName, SUM(fs.LineTotal) AS lineTotal, SUM(fs.Quantity) AS quantity, COUNT(DISTINCT fs.SalesOrderID) AS orderCount, SUM(fs.LineTotal - fs.TaxAmount - (fs.Quantity * p.StandardCost)) AS profit FROM FactSales fs JOIN Employees e ON fs.SalesRepID = e.EmployeeID JOIN Products p ON fs.ProductID = p.ProductID GROUP BY e.EmployeeName'
               : 'Sorting and rankings from local static dataset. Connect SSAS_CUBE linked server for live data.'}
           </span>
         </div>

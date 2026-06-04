@@ -14,6 +14,10 @@ interface DashboardContextType {
   // Theme state
   theme: 'light' | 'dark';
   toggleTheme: () => void;
+
+  // Demo Mode (prevents silent fallback to static mock data)
+  demoMode: boolean;
+  setDemoMode: React.Dispatch<React.SetStateAction<boolean>>;
   
   // Available filter options based on dataset
   availableYears: number[];
@@ -57,6 +61,7 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
   const [filters, setFilters] = useState<DashboardFilters>({
     year: 'All',
     quarter: 'All',
+    month: 'All',
     brand: 'All',
     status: 'All'
   });
@@ -91,19 +96,28 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   };
 
-  // Extract static list of unique filters from raw data
-  const availableYears = useMemo(() => {
-    const years = dataset.dates.map(d => d.YearNumber);
-    return Array.from(new Set(years)).sort((a, b) => b - a);
-  }, []);
+  const [demoMode, setDemoMode] = useState<boolean>(false);
 
-  const availableBrands = useMemo(() => {
-    return dataset.brands.map(b => ({ id: b.BrandID, name: b.BrandName }));
-  }, []);
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
+  const [availableBrands, setAvailableBrands] = useState<{ id: number; name: string }[]>([]);
+  const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
 
-  const availableStatuses = useMemo(() => {
-    const statuses = dataset.sales.map(s => s.OrderStatus);
-    return Array.from(new Set(statuses));
+  useEffect(() => {
+    fetch('/api/filters')
+      .then(r => r.json())
+      .then(d => {
+        setAvailableYears(d.years ?? []);
+        setAvailableBrands(d.brands ?? []);
+        setAvailableStatuses(d.statuses ?? []);
+      })
+      .catch(() => {
+        const staticYears = Array.from(new Set(dataset.dates.map(d => d.YearNumber))).sort((a, b) => b - a);
+        const staticBrands = dataset.brands.map(b => ({ id: b.BrandID, name: b.BrandName }));
+        const staticStatuses = Array.from(new Set(dataset.sales.map(s => s.OrderStatus)));
+        setAvailableYears(staticYears);
+        setAvailableBrands(staticBrands);
+        setAvailableStatuses(staticStatuses);
+      });
   }, []);
 
   // Filter the sales dataset dynamically
@@ -503,7 +517,9 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         countryData,
         repLeaderboard,
         promotionsData,
-        discountDeepDive
+        discountDeepDive,
+        demoMode,
+        setDemoMode
       }}
     >
       {children}

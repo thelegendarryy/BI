@@ -11,8 +11,9 @@
 
 import React from 'react';
 import { useDashboard } from '../context/DashboardContext';
-import { useSalesByBrand, useSalesByProduct } from '../hooks/useOlapData';
+import { useSalesByBrand, useSalesByProduct, useSalesByGeography } from '../hooks/useOlapData';
 import { ChartSkeleton, OlapErrorBanner, DataSourceBadge } from './LoadingSkeleton';
+import { exportToCSV } from '../lib/export';
 import { 
   BarChart, 
   Bar, 
@@ -30,15 +31,45 @@ import { Globe2, Tags, Box } from 'lucide-react';
 
 export const SalesPerformance: React.FC = () => {
   // Static fallback data
-  const { brandData: staticBrandData, categoryData: staticCategoryData, countryData, theme } = useDashboard();
+  const { brandData: staticBrandData, categoryData: staticCategoryData, countryData, theme, filters, demoMode, setDemoMode } = useDashboard();
 
   // Live OLAP data
-  const { data: olapBrands, loading: brandsLoading, error: brandsError } = useSalesByBrand();
-  const { data: olapProducts, loading: productsLoading, error: productsError } = useSalesByProduct();
+  const { data: olapBrands, loading: brandsLoading, error: brandsError } = useSalesByBrand(filters);
+  const { data: olapProducts, loading: productsLoading, error: productsError } = useSalesByProduct(filters);
+  const { data: geoData, loading: geoLoading, error: geoError } = useSalesByGeography('country', filters);
 
   const isDark = theme === 'dark';
-  const brandsLive = !brandsLoading && !brandsError && olapBrands !== null;
-  const productsLive = !productsLoading && !productsError && olapProducts !== null;
+  const brandsLive = !demoMode && !brandsLoading && !brandsError && olapBrands !== null;
+  const productsLive = !demoMode && !productsLoading && !productsError && olapProducts !== null;
+  const geoLive = !demoMode && !geoLoading && !geoError && geoData !== null;
+
+  // If connection failed and NOT in demo mode, block silent fallback and prompt user to enable demo mode
+  const connectionError = brandsError || productsError || geoError;
+  if (connectionError && !demoMode) {
+    return (
+      <div className="space-y-6">
+        <OlapErrorBanner message={connectionError} endpoint="/api/sales-by-brand" />
+        <div className="bg-card border border-border rounded-2xl p-8 shadow-sm text-center max-w-xl mx-auto space-y-4 my-8">
+          <div className="w-16 h-16 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center mx-auto">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-bold text-foreground">Database Connection Offline</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            The SalesCube BI workspace could not retrieve brand or product category metrics because the database server is offline. 
+            To proceed using local pre-seeded snapshot data, click below to enable Demo Mode.
+          </p>
+          <button
+            onClick={() => setDemoMode(true)}
+            className="inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-colors shadow-sm select-none active:scale-95 cursor-pointer"
+          >
+            Enable Presentation Demo Mode
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const chartTheme = {
     brandBar: isDark ? '#818cf8' : '#4f46e5',
@@ -68,6 +99,11 @@ export const SalesPerformance: React.FC = () => {
     ? olapProducts!.slice(0, 8).map((p) => ({ name: p.name, value: Math.round(p.lineTotal) }))
     : staticCategoryData;
 
+  // Transform OLAP country data to chart format
+  const finalCountryData = geoLive
+    ? geoData!.data.map((d) => ({ name: d.country, revenue: Math.round(d.lineTotal) }))
+    : countryData;
+
   // Custom tooltips
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -96,6 +132,7 @@ export const SalesPerformance: React.FC = () => {
       {/* Error banners */}
       {brandsError && <OlapErrorBanner message={brandsError} endpoint="/api/sales-by-brand" />}
       {productsError && <OlapErrorBanner message={productsError} endpoint="/api/sales-by-product" />}
+      {geoError && <OlapErrorBanner message={geoError} endpoint="/api/sales-by-geography" />}
 
       {/* 2-Column Grid: Brand & Product */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -114,7 +151,18 @@ export const SalesPerformance: React.FC = () => {
                 </p>
               </div>
             </div>
-            <DataSourceBadge isLive={brandsLive} loading={brandsLoading} />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => exportToCSV(
+                  brandChartData.map(b => ({ Brand: b.name, 'Revenue (USD)': b.revenue, 'Qty Sold': (b as { volume?: number }).volume ?? '' })),
+                  'SalesCube_SalesByBrand'
+                )}
+                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                📥 Export
+              </button>
+              <DataSourceBadge isLive={brandsLive} loading={brandsLoading} />
+            </div>
           </div>
 
           <div className="h-[280px] w-full text-foreground select-none">
@@ -210,7 +258,7 @@ export const SalesPerformance: React.FC = () => {
         </div>
       </div>
 
-      {/* Row 2: Region/Country Performance — static data */}
+      {/* Row 2: Region/Country Performance — live data */}
       <div className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="flex items-center gap-3">
@@ -224,17 +272,19 @@ export const SalesPerformance: React.FC = () => {
               </p>
             </div>
           </div>
-          <DataSourceBadge isLive={false} />
+          <DataSourceBadge isLive={geoLive} loading={geoLoading} />
         </div>
 
         <div className="h-[300px] w-full text-foreground select-none">
-          {countryData.length === 0 ? (
+          {geoLoading ? (
+            <ChartSkeleton height={300} />
+          ) : finalCountryData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
               No data available for the active filters.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={countryData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+              <BarChart data={finalCountryData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartTheme.grid} />
                 <XAxis 
                   dataKey="name" 

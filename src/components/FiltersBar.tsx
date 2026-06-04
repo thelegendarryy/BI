@@ -31,6 +31,7 @@ export const FiltersBar: React.FC = () => {
     setFilters({
       year: 'All',
       quarter: 'All',
+      month: 'All',
       brand: 'All',
       status: 'All'
     });
